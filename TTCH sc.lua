@@ -872,10 +872,11 @@ local toolsLayout = make("UIListLayout", {
 
 -- add a tool by giving it a name + run function; unset slots stay placeholders
 local toolDefs = {
-    [1] = {name = "Yankle Doodle", run = function()
+    [1] = {name = "Jerk off", run = function()
         loadstring(game:HttpGet("https://raw.githubusercontent.com/mckenziii/yankle-doodle/refs/heads/main/yankle%20doodle%20sc"))()
     end},
 }
+
 
 for i = 1, 10 do
     local def = toolDefs[i]
