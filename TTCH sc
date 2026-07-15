@@ -197,7 +197,7 @@ connect(speedBox.FocusLost, function()
 end)
 
 -- movement
-local keys = {W = false, A = false, S = false, D = false}
+local keys = {W = false, A = false, S = false, D = false, Up = false, Down = false}
 
 connect(UIS.InputBegan, function(i, g)
     if g then return end
@@ -229,8 +229,8 @@ connect(RunService.RenderStepped, function()
     local fw = Vector3.new(l.X, 0, l.Z).Unit
     local ri = Vector3.new(r.X, 0, r.Z).Unit
     local mv = Vector3.zero
-    if keys.W then mv += fw end
-    if keys.S then mv -= fw end
+    if keys.W or keys.Up then mv += fw end
+    if keys.S or keys.Down then mv -= fw end
     if keys.A then mv -= ri end
     if keys.D then mv += ri end
     if mv.Magnitude > 0 then
