@@ -80,7 +80,7 @@ local function click()
 end
 
 local main = make("Frame", {
-    Size = UDim2.new(0, 340, 0, 210),
+    Size = UDim2.new(0, 380, 0, 210),
     Position = UDim2.new(0, 16, 0.5, -105),
     BackgroundColor3 = COL.bg,
     BorderSizePixel = 0,
@@ -147,14 +147,14 @@ make("Frame", {
 local pages, tabs = {}, {}
 local selectTab
 
-local TAB_COUNT = 6
+local TAB_COUNT = 7
 local function makeTab(name, order)
     local m, gap = 8, 5
-    local w = (340 - m * 2 - gap * (TAB_COUNT - 1)) / TAB_COUNT
+    local w = (380 - m * 2 - gap * (TAB_COUNT - 1)) / TAB_COUNT
     local btn = make("TextButton", {
         Size = UDim2.new(0, w, 0, 26),
         Position = UDim2.new(0, m + (order - 1) * (w + gap), 0, 44),
-        BackgroundColor3 = COL.element, Font = Enum.Font.GothamMedium, TextSize = 11,
+        BackgroundColor3 = COL.element, Font = Enum.Font.GothamMedium, TextSize = 10,
         TextColor3 = COL.sub, Text = name, AutoButtonColor = false, BorderSizePixel = 0,
     }, main)
     round(btn, 7)
@@ -176,6 +176,7 @@ local espPage = makeTab("ESP", 3)
 local hitboxPage = makeTab("Hitbox", 4)
 local playerPage = makeTab("Player", 5)
 local flyPage = makeTab("Fly", 6)
+local toolsPage = makeTab("Tools", 7)
 
 function selectTab(name)
     for n, page in pairs(pages) do
@@ -856,6 +857,50 @@ connect(player.CharacterAdded, function()
         stopFly()
     end
 end)
+
+-- ========== TOOLS TAB ==========
+-- scrolling list of placeholder buttons (10 don't fit in the panel, so it scrolls)
+local toolsScroll = make("ScrollingFrame", {
+    Size = UDim2.new(1, 0, 1, 0), Position = UDim2.new(0, 0, 0, 0),
+    BackgroundTransparency = 1, BorderSizePixel = 0,
+    ScrollBarThickness = 4, ScrollBarImageColor3 = COL.sub,
+    CanvasSize = UDim2.new(0, 0, 0, 0),
+}, toolsPage)
+local toolsLayout = make("UIListLayout", {
+    Padding = UDim.new(0, 6), SortOrder = Enum.SortOrder.LayoutOrder,
+}, toolsScroll)
+
+-- add a tool by giving it a name + run function; unset slots stay placeholders
+local toolDefs = {
+    [1] = {name = "Yankle Doodle", run = function()
+        loadstring(game:HttpGet("https://raw.githubusercontent.com/mckenziii/yankle-doodle/refs/heads/main/yankle%20doodle%20sc"))()
+    end},
+}
+
+for i = 1, 10 do
+    local def = toolDefs[i]
+    local b = make("TextButton", {
+        Size = UDim2.new(1, -6, 0, 28),
+        BackgroundColor3 = COL.element, Font = Enum.Font.GothamMedium, TextSize = 13,
+        TextColor3 = COL.text, Text = def and def.name or ("Tool " .. i), AutoButtonColor = true,
+        BorderSizePixel = 0, LayoutOrder = i,
+    }, toolsScroll)
+    round(b, 6)
+    connect(b.MouseButton1Click, function()
+        click()
+        if def and def.run then
+            local ok, err = pcall(def.run)
+            if not ok then warn("[Tools] " .. tostring(def.name) .. " failed: " .. tostring(err)) end
+        end
+    end)
+end
+
+-- keep the scroll canvas sized to the button list
+local function sizeToolsCanvas()
+    toolsScroll.CanvasSize = UDim2.new(0, 0, 0, toolsLayout.AbsoluteContentSize.Y + 6)
+end
+connect(toolsLayout:GetPropertyChangedSignal("AbsoluteContentSize"), sizeToolsCanvas)
+sizeToolsCanvas()
 
 -- ========== DRAGGING ==========
 do
