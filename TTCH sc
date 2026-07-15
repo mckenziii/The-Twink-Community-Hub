@@ -80,7 +80,7 @@ local function click()
 end
 
 local main = make("Frame", {
-    Size = UDim2.new(0, 300, 0, 210),
+    Size = UDim2.new(0, 340, 0, 210),
     Position = UDim2.new(0, 16, 0.5, -105),
     BackgroundColor3 = COL.bg,
     BorderSizePixel = 0,
@@ -111,10 +111,10 @@ make("Frame", {
 local pages, tabs = {}, {}
 local selectTab
 
-local TAB_COUNT = 5
+local TAB_COUNT = 6
 local function makeTab(name, order)
     local m, gap = 8, 5
-    local w = (300 - m * 2 - gap * (TAB_COUNT - 1)) / TAB_COUNT
+    local w = (340 - m * 2 - gap * (TAB_COUNT - 1)) / TAB_COUNT
     local btn = make("TextButton", {
         Size = UDim2.new(0, w, 0, 26),
         Position = UDim2.new(0, m + (order - 1) * (w + gap), 0, 44),
@@ -139,6 +139,7 @@ local gravPage = makeTab("Gravity", 2)
 local espPage = makeTab("ESP", 3)
 local hitboxPage = makeTab("Hitbox", 4)
 local playerPage = makeTab("Player", 5)
+local flyPage = makeTab("Fly", 6)
 
 function selectTab(name)
     for n, page in pairs(pages) do
@@ -593,6 +594,218 @@ connect(specBtn.MouseButton1Click, function()
         else
             playerStatus.Text = "No character to spectate"
         end
+    end
+end)
+
+-- ========== FLY TAB ==========
+-- (adapted from the standalone sfly build: gyro/velocity flight, bobbing hover,
+--  inertia slide, superman pitch/roll, custom fly animations)
+local flyEnabled = false
+local flightSpeed = 50
+local FLY_MAX_SPEED = 9842774
+local flyKey = Enum.KeyCode.X
+local awaitingFlyKey = false
+local flyConns = {}
+local flyGyro, flyVel
+local flyMove = {forward = 0, backward = 0, left = 0, right = 0}
+local flyCurrentVel = Vector3.zero
+local flyCurrentCF = nil
+local flyRoll = 0
+local flyLerp = 0.1
+local flyBobFreq, flyBobAmp = 1, 0.5
+local flyAnimTrack = nil
+local FLY_IDLE_ANIM = 10714347256
+local FLY_FWD_ANIM = 10714177846
+
+local function flySetAnimate(disabled)
+    local ch = player.Character
+    local a = ch and ch:FindFirstChild("Animate")
+    if a then a.Disabled = disabled end
+end
+
+local function flyPlayAnim(animId, startTime, spd)
+    local ch = player.Character
+    local hum = ch and ch:FindFirstChildOfClass("Humanoid")
+    if not hum then return end
+    if flyAnimTrack then flyAnimTrack:Stop(0.1) flyAnimTrack = nil end
+    flySetAnimate(true)
+    for _, tr in ipairs(hum:GetPlayingAnimationTracks()) do tr:Stop() end
+    local anim = Instance.new("Animation")
+    anim.AnimationId = "rbxassetid://" .. tostring(animId)
+    local ok, track = pcall(function() return hum:LoadAnimation(anim) end)
+    if ok and track then
+        flyAnimTrack = track
+        track:Play()
+        track.TimePosition = startTime
+        track:AdjustSpeed(spd)
+    end
+end
+
+local function flyStopAnim()
+    if flyAnimTrack then flyAnimTrack:Stop(0.1) flyAnimTrack = nil end
+    flySetAnimate(false)
+    local ch = player.Character
+    local hum = ch and ch:FindFirstChildOfClass("Humanoid")
+    if hum then
+        for _, tr in ipairs(hum:GetPlayingAnimationTracks()) do tr:Stop() end
+    end
+end
+
+local function startFly()
+    local ch = player.Character
+    local root = ch and ch:FindFirstChild("HumanoidRootPart")
+    local hum = ch and ch:FindFirstChildOfClass("Humanoid")
+    if not root or not hum then return end
+    hum.PlatformStand = true
+    flyPlayAnim(FLY_IDLE_ANIM, 4, 0)
+
+    flyGyro = Instance.new("BodyGyro")
+    flyGyro.Name = "FlyGyro"
+    flyGyro.P = 90000
+    flyGyro.MaxTorque = Vector3.new(9e9, 9e9, 9e9)
+    flyGyro.CFrame = root.CFrame
+    flyGyro.Parent = root
+
+    flyVel = Instance.new("BodyVelocity")
+    flyVel.Name = "FlyVelocity"
+    flyVel.MaxForce = Vector3.new(9e9, 9e9, 9e9)
+    flyVel.Velocity = Vector3.new(0, 0.1, 0)
+    flyVel.Parent = root
+
+    flyCurrentVel = Vector3.zero
+    flyCurrentCF = nil
+
+    local upd = RunService.RenderStepped:Connect(function()
+        if not flyGyro or not flyVel then return end
+        local cam = workspace.CurrentCamera
+        local fwd = flyMove.forward - flyMove.backward
+        local side = flyMove.right - flyMove.left
+        local inputVec = (cam.CFrame.LookVector * fwd) + (cam.CFrame.RightVector * side)
+        if fwd ~= 0 then inputVec = inputVec + Vector3.new(0, 0.2 * fwd, 0) end
+        local bobbing = math.sin(tick() * flyBobFreq) * flyBobAmp
+        local desired = Vector3.zero
+        if inputVec.Magnitude > 0 then
+            desired = inputVec.Unit * flightSpeed
+        else
+            desired = Vector3.new(0, bobbing, 0)
+        end
+        flyCurrentVel = flyCurrentVel:Lerp(desired, 0.1)
+        flyVel.Velocity = flyCurrentVel
+        local desiredCF
+        if fwd > 0 then
+            desiredCF = cam.CFrame * CFrame.Angles(math.rad(-90), 0, math.rad(flyRoll))
+        else
+            desiredCF = cam.CFrame * CFrame.Angles(math.rad(-45 * fwd), 0, math.rad(flyRoll))
+        end
+        if flyCurrentCF then
+            flyCurrentCF = flyCurrentCF:Lerp(desiredCF, flyLerp)
+        else
+            flyCurrentCF = desiredCF
+        end
+        flyGyro.CFrame = flyCurrentCF
+    end)
+    table.insert(flyConns, upd)
+
+    local began = UIS.InputBegan:Connect(function(i, gp)
+        if gp then return end
+        if i.UserInputType ~= Enum.UserInputType.Keyboard then return end
+        local k = i.KeyCode
+        if k == Enum.KeyCode.W then flyMove.forward = 1 flyPlayAnim(FLY_FWD_ANIM, 4.65, 0)
+        elseif k == Enum.KeyCode.S then flyMove.backward = 1 flyPlayAnim(FLY_IDLE_ANIM, 4, 0)
+        elseif k == Enum.KeyCode.A then flyMove.left = 1 if flyMove.forward > 0 then flyPlayAnim(FLY_FWD_ANIM, 4.65, 0) end
+        elseif k == Enum.KeyCode.D then flyMove.right = 1 if flyMove.forward > 0 then flyPlayAnim(FLY_FWD_ANIM, 4.65, 0) end
+        end
+    end)
+    table.insert(flyConns, began)
+
+    local ended = UIS.InputEnded:Connect(function(i)
+        if i.UserInputType ~= Enum.UserInputType.Keyboard then return end
+        local k = i.KeyCode
+        if k == Enum.KeyCode.W then flyMove.forward = 0 flyPlayAnim(FLY_IDLE_ANIM, 4, 0)
+        elseif k == Enum.KeyCode.S then flyMove.backward = 0 flyPlayAnim(FLY_IDLE_ANIM, 4, 0)
+        elseif k == Enum.KeyCode.A then flyMove.left = 0 if flyMove.forward > 0 then flyPlayAnim(FLY_FWD_ANIM, 4.65, 0) end
+        elseif k == Enum.KeyCode.D then flyMove.right = 0 if flyMove.forward > 0 then flyPlayAnim(FLY_FWD_ANIM, 4.65, 0) end
+        end
+    end)
+    table.insert(flyConns, ended)
+end
+
+local function stopFly()
+    local ch = player.Character
+    local hum = ch and ch:FindFirstChildOfClass("Humanoid")
+    if hum then hum.PlatformStand = false end
+    flyStopAnim()
+    local root = ch and ch:FindFirstChild("HumanoidRootPart")
+    if root then
+        local g = root:FindFirstChild("FlyGyro") if g then g:Destroy() end
+        local v = root:FindFirstChild("FlyVelocity") if v then v:Destroy() end
+    end
+    flyGyro, flyVel = nil, nil
+    for _, c in ipairs(flyConns) do if c.Connected then c:Disconnect() end end
+    flyConns = {}
+    flyMove = {forward = 0, backward = 0, left = 0, right = 0}
+end
+
+-- UI
+row(flyPage, 0, "Fly")
+local setFlySwitch, toggleFly = makeSwitch(flyPage, 0, false, function(on)
+    flyEnabled = on
+    if on then startFly() else stopFly() end
+end)
+
+row(flyPage, 36, "Speed (0-9842774)")
+local flyBox = make("TextBox", {
+    Size = UDim2.new(0, 90, 0, 26), Position = UDim2.new(1, -90, 0, 34),
+    BackgroundColor3 = COL.element, Font = Enum.Font.Gotham, TextSize = 13,
+    TextColor3 = COL.text, Text = tostring(flightSpeed), PlaceholderText = "speed",
+    PlaceholderColor3 = COL.sub, ClearTextOnFocus = false, BorderSizePixel = 0,
+}, flyPage)
+round(flyBox, 6)
+connect(flyBox.FocusLost, function()
+    local n = tonumber(flyBox.Text)
+    if n then flightSpeed = math.clamp(n, 0, FLY_MAX_SPEED) end
+    flyBox.Text = tostring(flightSpeed)
+end)
+
+row(flyPage, 72, "Toggle key")
+local flyKeyBtn = make("TextButton", {
+    Size = UDim2.new(0, 90, 0, 26), Position = UDim2.new(1, -90, 0, 70),
+    BackgroundColor3 = COL.element, Font = Enum.Font.GothamMedium, TextSize = 12,
+    TextColor3 = COL.text, Text = flyKey.Name, AutoButtonColor = false, BorderSizePixel = 0,
+}, flyPage)
+round(flyKeyBtn, 6)
+connect(flyKeyBtn.MouseButton1Click, function()
+    click()
+    awaitingFlyKey = true
+    flyKeyBtn.Text = "press key"
+end)
+
+-- global handler: capture a new toggle key when rebinding, otherwise fire the toggle
+connect(UIS.InputBegan, function(i, gp)
+    if i.UserInputType ~= Enum.UserInputType.Keyboard then return end
+    if awaitingFlyKey then
+        local kc = i.KeyCode
+        local ignore = {
+            Enum.KeyCode.LeftShift, Enum.KeyCode.RightShift,
+            Enum.KeyCode.LeftControl, Enum.KeyCode.RightControl,
+            Enum.KeyCode.LeftAlt, Enum.KeyCode.RightAlt, Enum.KeyCode.Unknown,
+        }
+        for _, m in ipairs(ignore) do if kc == m then return end end
+        awaitingFlyKey = false
+        flyKey = kc
+        flyKeyBtn.Text = kc.Name
+        return
+    end
+    if gp then return end
+    if i.KeyCode == flyKey then toggleFly() end
+end)
+
+-- stop flying cleanly on respawn (old body objects die with the old character)
+connect(player.CharacterAdded, function()
+    if flyEnabled then
+        flyEnabled = false
+        setFlySwitch(false)
+        stopFly()
     end
 end)
 
@@ -1140,6 +1353,7 @@ _G.ScriptHubCleanup = function()
     for _, c in ipairs(conns) do c:Disconnect() end
     for plr in pairs(espObjects) do espRemove(plr) end
     hbRestoreAll()
+    stopFly()
     -- make sure we're not left stuck in someone else's camera
     pcall(function()
         local myhum = player.Character and player.Character:FindFirstChildOfClass("Humanoid")
