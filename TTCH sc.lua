@@ -1278,8 +1278,8 @@ connect(player.Chatted, function(msg)
                 myHRP.CFrame = targetHRP.CFrame + Vector3.new(0,0,3)
             end
         end
-
-
+    elseif cmd == "clicktp" then 
+        loadstring(game:HttpGet("https://raw.githubusercontent.com/mckenziii/The-Twink-Community-Hub/refs/heads/main/util/syn'stptool.lua"))()
 
     -- =========================
     -- SPECTATE
