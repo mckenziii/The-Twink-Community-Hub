@@ -89,6 +89,42 @@ local main = make("Frame", {
 round(main, 10)
 make("UIStroke", {Color = COL.stroke, Thickness = 1}, main)
 
+-- Background image at 25% visibility. Roblox can't show a raw/local image directly, so
+-- this resolves one two ways, in order:
+--   1) a local image file in your executor's workspace folder (loaded via getcustomasset)
+--   2) the uploaded decal id, resolved to its underlying texture
+local HUB_IMAGE_FILE = "twinkhub_bg.png" -- put this file in your executor's workspace folder
+local HUB_IMAGE_ID = 104049828893869     -- fallback: the uploaded decal
+
+local function resolveHubImage()
+    -- 1) local file via the executor
+    local getasset = getcustomasset or getsynasset or (syn and syn.getcustomasset)
+    if getasset and isfile and isfile(HUB_IMAGE_FILE) then
+        local ok, res = pcall(getasset, HUB_IMAGE_FILE)
+        if ok and res then return res end
+    end
+    -- 2) resolve the decal to its image texture
+    local ok, tex = pcall(function()
+        local model = game:GetService("InsertService"):LoadAsset(HUB_IMAGE_ID)
+        local decal = model:FindFirstChildWhichIsA("Decal", true)
+        local texture = decal and decal.Texture
+        model:Destroy()
+        return texture
+    end)
+    if ok and tex then return tex end
+    return "rbxassetid://" .. HUB_IMAGE_ID
+end
+
+local bgImage = make("ImageLabel", {
+    Size = UDim2.new(1, 0, 1, 0), Position = UDim2.new(0, 0, 0, 0),
+    BackgroundTransparency = 1,
+    Image = resolveHubImage(),
+    ImageTransparency = 0.75, -- 0.75 = 25% visible
+    ScaleType = Enum.ScaleType.Crop,
+    ZIndex = 0, -- sit behind every other element
+}, main)
+round(bgImage, 10)
+
 -- title bar
 local titleBar = make("Frame", {Size = UDim2.new(1, 0, 0, 36), BackgroundTransparency = 1}, main)
 make("TextLabel", {
@@ -767,6 +803,18 @@ connect(flyBox.FocusLost, function()
     flyBox.Text = tostring(flightSpeed)
 end)
 
+-- shared !sfly command action: "!sfly" toggles fly; "!sfly <n>" sets speed and turns it on
+local function doSfly(arg)
+    local n = tonumber(arg)
+    if n then
+        flightSpeed = math.clamp(n, 0, FLY_MAX_SPEED)
+        flyBox.Text = tostring(flightSpeed)
+        if not flyEnabled then toggleFly() end
+    else
+        toggleFly()
+    end
+end
+
 row(flyPage, 72, "Toggle key")
 local flyKeyBtn = make("TextButton", {
     Size = UDim2.new(0, 90, 0, 26), Position = UDim2.new(1, -90, 0, 70),
@@ -1029,6 +1077,7 @@ connect(player.Chatted, function(msg)
         "!tp <player>",
         "!sp <player>",
         "!unsp",
+        "!sfly <speed>",
         "!cmdbar",
         "!help",
         "!runcode <lua>",
@@ -1110,6 +1159,10 @@ connect(player.Chatted, function(msg)
                 if myHum then
                     workspace.CurrentCamera.CameraSubject = myHum
                 end
+
+            elseif c == "sfly" then
+
+                doSfly(a)
 
             end
         end)
@@ -1233,6 +1286,7 @@ connect(player.Chatted, function(msg)
         "!tp <player> - Teleport to player",
         "!sp <player> - Spectate player",
         "!unsp - Stop spectating",
+        "!sfly <speed> - Toggle fly / set fly speed",
         "!cmdbar - Open command bar",
         "!help - Open this menu",
         "!runcode <lua> - Execute Lua code",
@@ -1345,6 +1399,10 @@ connect(player.Chatted, function(msg)
         if myHum then
             workspace.CurrentCamera.CameraSubject = myHum
         end
+
+    elseif cmd == "sfly" then
+
+        doSfly(arg)
 
     end
 end)
