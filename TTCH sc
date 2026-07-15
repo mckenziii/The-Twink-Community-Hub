@@ -1,0 +1,316 @@
+-- LocalScript (StarterPlayerScripts)
+-- Script Hub: CFrame Speed + Gravity
+-- K = hide/show GUI
+
+local Players = game:GetService("Players")
+local RunService = game:GetService("RunService")
+local UIS = game:GetService("UserInputService")
+local TweenService = game:GetService("TweenService")
+
+local player = Players.LocalPlayer
+local char = player.Character or player.CharacterAdded:Wait()
+local hrp = char:WaitForChild("HumanoidRootPart")
+
+_G.CFrameSpeed = _G.CFrameSpeed or 0.09
+
+-- clean up a previous run so movement/connections never double up
+if _G.ScriptHubCleanup then pcall(_G.ScriptHubCleanup) end
+
+local conns = {}
+local function connect(sig, fn)
+    local c = sig:Connect(fn)
+    conns[#conns + 1] = c
+    return c
+end
+
+local TOGGLE_KEY = Enum.KeyCode.K
+
+local COL = {
+    bg      = Color3.fromRGB(24, 25, 31),
+    element = Color3.fromRGB(41, 44, 54),
+    stroke  = Color3.fromRGB(58, 62, 75),
+    accent  = Color3.fromRGB(99, 120, 255),
+    on      = Color3.fromRGB(230, 68, 68),
+    text    = Color3.fromRGB(235, 238, 245),
+    sub     = Color3.fromRGB(142, 148, 165),
+    off     = Color3.fromRGB(84, 88, 102),
+}
+
+local function make(class, props, parent)
+    local o = Instance.new(class)
+    for k, v in pairs(props) do o[k] = v end
+    o.Parent = parent
+    return o
+end
+
+local function round(o, r)
+    make("UICorner", {CornerRadius = UDim.new(0, r)}, o)
+end
+
+local function tween(o, props)
+    TweenService:Create(o, TweenInfo.new(0.15, Enum.EasingStyle.Quad, Enum.EasingDirection.Out), props):Play()
+end
+
+-- ========== GUI ==========
+local gui = make("ScreenGui", {Name = "ScriptHub", ResetOnSpawn = false}, player:WaitForChild("PlayerGui"))
+
+-- toggle click sound (built-in asset, always loads; swap SoundId for any catalog sound)
+local clickSound = make("Sound", {SoundId = "rbxasset://sounds/clickfast.wav", Volume = 0.6}, gui)
+local function click()
+    clickSound:Play()
+end
+
+local main = make("Frame", {
+    Size = UDim2.new(0, 300, 0, 210),
+    Position = UDim2.new(0, 16, 0.5, -105),
+    BackgroundColor3 = COL.bg,
+    BorderSizePixel = 0,
+    Active = true,
+}, gui)
+round(main, 10)
+make("UIStroke", {Color = COL.stroke, Thickness = 1}, main)
+
+-- title bar
+local titleBar = make("Frame", {Size = UDim2.new(1, 0, 0, 36), BackgroundTransparency = 1}, main)
+make("TextLabel", {
+    Size = UDim2.new(1, -52, 1, 0), Position = UDim2.new(0, 12, 0, 0),
+    BackgroundTransparency = 1, Font = Enum.Font.GothamBold, TextSize = 14,
+    TextColor3 = COL.text, Text = "The Twink Community Hub", TextXAlignment = Enum.TextXAlignment.Left,
+}, titleBar)
+local keyChip = make("TextLabel", {
+    Size = UDim2.new(0, 28, 0, 20), Position = UDim2.new(1, -36, 0, 8),
+    BackgroundColor3 = COL.element, Font = Enum.Font.Gotham, TextSize = 11,
+    TextColor3 = COL.sub, Text = "K", BorderSizePixel = 0,
+}, titleBar)
+round(keyChip, 6)
+make("Frame", {
+    Size = UDim2.new(1, -16, 0, 1), Position = UDim2.new(0, 8, 0, 36),
+    BackgroundColor3 = COL.stroke, BorderSizePixel = 0,
+}, main)
+
+-- tabs
+local pages, tabs = {}, {}
+local selectTab
+
+local function makeTab(name, order)
+    local btn = make("TextButton", {
+        Size = UDim2.new(0.5, -14, 0, 26),
+        Position = UDim2.new((order - 1) * 0.5, order == 1 and 10 or 4, 0, 44),
+        BackgroundColor3 = COL.element, Font = Enum.Font.GothamMedium, TextSize = 13,
+        TextColor3 = COL.sub, Text = name, AutoButtonColor = false, BorderSizePixel = 0,
+    }, main)
+    round(btn, 7)
+    local page = make("Frame", {
+        Size = UDim2.new(1, -24, 1, -88), Position = UDim2.new(0, 12, 0, 80),
+        BackgroundTransparency = 1, Visible = false,
+    }, main)
+    pages[name], tabs[name] = page, btn
+    connect(btn.MouseButton1Click, function()
+        click()
+        selectTab(name)
+    end)
+    return page
+end
+
+local speedPage = makeTab("Speed", 1)
+local gravPage = makeTab("Gravity", 2)
+
+function selectTab(name)
+    for n, page in pairs(pages) do
+        local active = n == name
+        page.Visible = active
+        tween(tabs[n], {
+            BackgroundColor3 = active and COL.accent or COL.element,
+            TextColor3 = active and Color3.new(1, 1, 1) or COL.sub,
+        })
+    end
+end
+
+-- reusable widgets
+local function row(parent, y, text)
+    return make("TextLabel", {
+        Size = UDim2.new(1, -60, 0, 22), Position = UDim2.new(0, 0, 0, y),
+        BackgroundTransparency = 1, Font = Enum.Font.Gotham, TextSize = 13,
+        TextColor3 = COL.text, Text = text, TextXAlignment = Enum.TextXAlignment.Left,
+    }, parent)
+end
+
+local function makeSwitch(parent, y, initial, onChanged)
+    local btn = make("TextButton", {
+        Size = UDim2.new(0, 40, 0, 22), Position = UDim2.new(1, -40, 0, y),
+        BackgroundColor3 = initial and COL.on or COL.off,
+        Text = "", AutoButtonColor = false, BorderSizePixel = 0,
+    }, parent)
+    round(btn, 11)
+    local knob = make("Frame", {
+        Size = UDim2.new(0, 16, 0, 16),
+        Position = initial and UDim2.new(1, -19, 0.5, -8) or UDim2.new(0, 3, 0.5, -8),
+        BackgroundColor3 = Color3.new(1, 1, 1), BorderSizePixel = 0,
+    }, btn)
+    round(knob, 8)
+    local state = initial
+    local function render()
+        tween(btn, {BackgroundColor3 = state and COL.on or COL.off})
+        tween(knob, {Position = state and UDim2.new(1, -19, 0.5, -8) or UDim2.new(0, 3, 0.5, -8)})
+    end
+    connect(btn.MouseButton1Click, function()
+        click()
+        state = not state
+        render()
+        onChanged(state)
+    end)
+    -- setter to sync visuals from outside without firing the callback
+    return function(newState)
+        if newState ~= state then state = newState render() end
+    end
+end
+
+-- ========== SPEED TAB ==========
+local speedEnabled = false
+row(speedPage, 0, "CFrame movement")
+makeSwitch(speedPage, 0, false, function(on) speedEnabled = on end)
+
+row(speedPage, 36, "Speed (0-99999)")
+local speedBox = make("TextBox", {
+    Size = UDim2.new(0, 78, 0, 26), Position = UDim2.new(1, -78, 0, 34),
+    BackgroundColor3 = COL.element, Font = Enum.Font.Gotham, TextSize = 13,
+    TextColor3 = COL.text, PlaceholderText = "speed", PlaceholderColor3 = COL.sub,
+    ClearTextOnFocus = false, BorderSizePixel = 0,
+}, speedPage)
+round(speedBox, 6)
+local currentLbl = make("TextLabel", {
+    Size = UDim2.new(1, 0, 0, 18), Position = UDim2.new(0, 0, 0, 72),
+    BackgroundTransparency = 1, Font = Enum.Font.Gotham, TextSize = 12,
+    TextColor3 = COL.sub, TextXAlignment = Enum.TextXAlignment.Left,
+}, speedPage)
+
+local function updateSpeedUI()
+    currentLbl.Text = "Current: " .. _G.CFrameSpeed
+    if not speedBox:IsFocused() then speedBox.Text = tostring(_G.CFrameSpeed) end
+end
+updateSpeedUI()
+
+connect(speedBox.FocusLost, function()
+    local n = tonumber(speedBox.Text)
+    if n then _G.CFrameSpeed = math.clamp(n, 0, 99999) end
+    updateSpeedUI()
+end)
+
+-- movement
+local keys = {W = false, A = false, S = false, D = false}
+
+connect(UIS.InputBegan, function(i, g)
+    if g then return end
+    if i.KeyCode == TOGGLE_KEY then
+        main.Visible = not main.Visible
+    elseif keys[i.KeyCode.Name] ~= nil then
+        keys[i.KeyCode.Name] = true
+    end
+end)
+connect(UIS.InputEnded, function(i)
+    if keys[i.KeyCode.Name] ~= nil then keys[i.KeyCode.Name] = false end
+end)
+
+connect(player.CharacterAdded, function(c)
+    char = c
+    hrp = c:WaitForChild("HumanoidRootPart")
+    for k in pairs(keys) do keys[k] = false end
+    updateSpeedUI()
+end)
+
+connect(RunService.RenderStepped, function()
+    if not speedEnabled then return end
+    if not hrp or not hrp.Parent then
+        char = player.Character or player.CharacterAdded:Wait()
+        hrp = char:WaitForChild("HumanoidRootPart")
+    end
+    local cf = workspace.CurrentCamera.CFrame
+    local l, r = cf.LookVector, cf.RightVector
+    local fw = Vector3.new(l.X, 0, l.Z).Unit
+    local ri = Vector3.new(r.X, 0, r.Z).Unit
+    local mv = Vector3.zero
+    if keys.W then mv += fw end
+    if keys.S then mv -= fw end
+    if keys.A then mv -= ri end
+    if keys.D then mv += ri end
+    if mv.Magnitude > 0 then
+        hrp.CFrame += mv.Unit * _G.CFrameSpeed * 0.1
+    end
+end)
+
+-- ========== GRAVITY TAB ==========
+local normalGravity = workspace.Gravity
+if normalGravity == 0 then normalGravity = 196.2 end
+
+row(gravPage, 0, "Zero gravity")
+
+row(gravPage, 36, "Gravity (0-500)")
+local gravBox = make("TextBox", {
+    Size = UDim2.new(0, 78, 0, 26), Position = UDim2.new(1, -78, 0, 34),
+    BackgroundColor3 = COL.element, Font = Enum.Font.Gotham, TextSize = 13,
+    TextColor3 = COL.text, PlaceholderText = "gravity", PlaceholderColor3 = COL.sub,
+    ClearTextOnFocus = false, BorderSizePixel = 0,
+}, gravPage)
+round(gravBox, 6)
+
+local gravLbl = make("TextLabel", {
+    Size = UDim2.new(1, 0, 0, 18), Position = UDim2.new(0, 0, 0, 72),
+    BackgroundTransparency = 1, Font = Enum.Font.Gotham, TextSize = 12,
+    TextColor3 = COL.sub, TextXAlignment = Enum.TextXAlignment.Left,
+}, gravPage)
+
+local function updateGravUI()
+    gravLbl.Text = ("Current: %.1f"):format(workspace.Gravity)
+    if not gravBox:IsFocused() then gravBox.Text = ("%g"):format(workspace.Gravity) end
+end
+
+local setGravSwitch = makeSwitch(gravPage, 0, workspace.Gravity == 0, function(on)
+    if on then
+        if workspace.Gravity ~= 0 then normalGravity = workspace.Gravity end
+        workspace.Gravity = 0
+    else
+        workspace.Gravity = normalGravity
+    end
+end)
+
+connect(gravBox.FocusLost, function()
+    local n = tonumber(gravBox.Text)
+    if n then workspace.Gravity = math.clamp(n, 0, 500) end
+    updateGravUI()
+end)
+
+connect(workspace:GetPropertyChangedSignal("Gravity"), function()
+    if workspace.Gravity ~= 0 then normalGravity = workspace.Gravity end
+    setGravSwitch(workspace.Gravity == 0)
+    updateGravUI()
+end)
+updateGravUI()
+
+-- ========== DRAGGING ==========
+do
+    local drag, start, pos
+    connect(titleBar.InputBegan, function(i)
+        if i.UserInputType == Enum.UserInputType.MouseButton1 then
+            drag = true
+            start = i.Position
+            pos = main.Position
+        end
+    end)
+    connect(UIS.InputChanged, function(i)
+        if drag and i.UserInputType == Enum.UserInputType.MouseMovement then
+            local d = i.Position - start
+            main.Position = UDim2.new(0, pos.X.Offset + d.X, 0, pos.Y.Offset + d.Y)
+        end
+    end)
+    connect(UIS.InputEnded, function(i)
+        if i.UserInputType == Enum.UserInputType.MouseButton1 then drag = false end
+    end)
+end
+
+selectTab("Speed")
+
+_G.ScriptHubCleanup = function()
+    for _, c in ipairs(conns) do c:Disconnect() end
+    gui:Destroy()
+    _G.ScriptHubCleanup = nil
+end
