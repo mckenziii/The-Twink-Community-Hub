@@ -6,11 +6,11 @@ local Players = game:GetService("Players")
 local RunService = game:GetService("RunService")
 local UIS = game:GetService("UserInputService")
 local TweenService = game:GetService("TweenService")
+local HttpService = game:GetService("HttpService")
 
 local player = Players.LocalPlayer
 local char = player.Character or player.CharacterAdded:Wait()
 local hrp = char:WaitForChild("HumanoidRootPart")
-
 _G.CFrameSpeed = _G.CFrameSpeed or 0.09
 
 -- clean up a previous run so movement/connections never double up
@@ -23,7 +23,26 @@ local function connect(sig, fn)
     return c
 end
 
-local VERSION = "BETAv1.2"
+local VERSION = "Unknown"
+
+local function getVersion()
+    local success, result = pcall(function()
+        return game:HttpGet(
+            "https://raw.githubusercontent.com/mckenziii/The-Twink-Community-Hub/main/version.txt?nocache=" .. os.time()
+        )
+    end)
+
+    if success then
+        VERSION = result:gsub("%s+", "")
+    else
+        warn("Version failed:", result)
+    end
+end
+
+getVersion()
+
+print("Loaded Version:", VERSION)
+
 local TOGGLE_KEY = Enum.KeyCode.K
 local SPEED_KEY = Enum.KeyCode.C
 local GRAV_KEY = Enum.KeyCode.G
