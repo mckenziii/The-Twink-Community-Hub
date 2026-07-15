@@ -1185,6 +1185,8 @@ local toolsLayout = make("UIListLayout", {
 }, toolsScroll)
 
 -- add a tool by giving it a name + run function; unset slots stay placeholders
+local slots = 10
+
 local toolDefs = {
 
 	[1] = {
@@ -1208,9 +1210,97 @@ local toolDefs = {
 			)()
 		end,
 	},
+
+	[3] = {
+		name = "Treehouse Fab",
+		run = function()
+			loadstring(
+				game:HttpGet(
+					"https://raw.githubusercontent.com/mckenziii/treehouse/refs/heads/main/treehouse%20sc"
+				)
+			)()
+		end,
+	},
+
+	[4] = {
+		name = "Twin-Towers Fab",
+		run = function()
+			loadstring(
+				game:HttpGet(
+					"https://raw.githubusercontent.com/mckenziii/twin-towers/refs/heads/main/twin%20towers%20sc"
+				)
+			)()
+		end,
+	},
+
+	[5] = {
+		name = "Stage Fab",
+		run = function()
+			loadstring(
+				game:HttpGet(
+					"https://raw.githubusercontent.com/mckenziii/stage/refs/heads/main/stage%20sc"
+				)
+			)()
+		end,
+	},
+
+	[6] = {
+		name = "Dance floor Fab",
+		run = function()
+			loadstring(
+				game:HttpGet(
+					"https://raw.githubusercontent.com/mckenziii/dance-floor/refs/heads/main/dance%20floor%20sc"
+				)
+			)()
+		end,
+	},
+
+	[7] = {
+		name = "Stripclub Fab",
+		run = function()
+			loadstring(
+				game:HttpGet(
+					"https://raw.githubusercontent.com/mckenziii/stripclub/refs/heads/main/stripclub%20sc"
+				)
+			)()
+		end,
+	},
+
+	[8] = {
+		name = "City islands Fab",
+		run = function()
+			loadstring(
+				game:HttpGet(
+					"https://raw.githubusercontent.com/mckenziii/city-islands/refs/heads/main/city%20islands%20sc"
+				)
+			)()
+		end,
+	},
+
+	[9] = {
+		name = "Racetrack Fab",
+		run = function()
+			loadstring(
+				game:HttpGet(
+					"https://raw.githubusercontent.com/mckenziii/racetrack/refs/heads/main/racetrack%20sc"
+				)
+			)()
+		end,
+	},
+
+	[10] = {
+		name = "Smoke your lungs out",
+		run = function()
+			loadstring(
+				game:HttpGet(
+					"https://raw.githubusercontent.com/mckenziii/smoke-your-lungs-out/refs/heads/main/smoke%20your%20lungs%20out%20sc"
+				)
+			)()
+		end,
+	},
 }
 
-for i = 1, 10 do
+for i = 1, slots do
 	local def = toolDefs[i]
 	local b = make("TextButton", {
 		Size = UDim2.new(1, -6, 0, 28),
@@ -2374,7 +2464,7 @@ _G.ScriptHubCleanup = function()
 end
 
 -- load notification = proof this version actually ran
-pcall(function()
+pcall(function() 
 	game:GetService("StarterGui"):SetCore("SendNotification", {
 		Title = "Twink Community Hub",
 		Text = VERSION .. " loaded | K hide | C speed | G gravity",
