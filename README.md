@@ -1,2 +1,4 @@
 # The-Twink-Community-Hub
-A Script Hub of all my scripts and other scripts I've posted here on github and pastebin :3
+A Script Hub made by me and Vertxxy
+
+discords: @vertxxy @synfulfox__
