@@ -28,9 +28,6 @@ local TOGGLE_KEY = Enum.KeyCode.K
 local SPEED_KEY = Enum.KeyCode.C
 local GRAV_KEY = Enum.KeyCode.G
 
-local waitingForToggleKey = false
-local keyChangeCooldown = false
-
 local COL = {
     bg      = Color3.fromRGB(24, 25, 31),
     element = Color3.fromRGB(41, 44, 54),
@@ -83,46 +80,12 @@ make("TextLabel", {
     BackgroundTransparency = 1, Font = Enum.Font.GothamBold, TextSize = 14,
     TextColor3 = COL.text, Text = "The Twink Community Hub", TextXAlignment = Enum.TextXAlignment.Left,
 }, titleBar)
-local keyChip = make("TextButton", {
-    Size = UDim2.new(0, 28, 0, 20),
-    Position = UDim2.new(1, -36, 0, 8),
-    BackgroundColor3 = COL.element,
-    Font = Enum.Font.Gotham,
-    TextSize = 11,
-    TextColor3 = COL.sub,
-    Text = TOGGLE_KEY.Name,
-    BorderSizePixel = 0,
-    AutoButtonColor = false,
+local keyChip = make("TextLabel", {
+    Size = UDim2.new(0, 28, 0, 20), Position = UDim2.new(1, -36, 0, 8),
+    BackgroundColor3 = COL.element, Font = Enum.Font.Gotham, TextSize = 11,
+    TextColor3 = COL.sub, Text = "K", BorderSizePixel = 0,
 }, titleBar)
-
 round(keyChip, 6)
-
-connect(keyChip.MouseButton1Click, function()
-    if waitingForToggleKey then return end
-
-    waitingForToggleKey = true
-    keyChip.Text = "..."
-
-    local bind
-    bind = UIS.InputBegan:Connect(function(input, processed)
-        if processed then return end
-
-        if input.UserInputType == Enum.UserInputType.Keyboard then
-            TOGGLE_KEY = input.KeyCode
-            keyChip.Text = TOGGLE_KEY.Name
-
-            waitingForToggleKey = false
-            keyChangeCooldown = true
-
-            bind:Disconnect()
-
-            -- tiny delay so the new key press doesn't toggle UI instantly
-            task.delay(0.25, function()
-                keyChangeCooldown = false
-            end)
-        end
-    end)
-end)
 make("Frame", {
     Size = UDim2.new(1, -16, 0, 1), Position = UDim2.new(0, 8, 0, 36),
     BackgroundColor3 = COL.stroke, BorderSizePixel = 0,
@@ -132,11 +95,14 @@ make("Frame", {
 local pages, tabs = {}, {}
 local selectTab
 
+local TAB_COUNT = 4
 local function makeTab(name, order)
+    local m, gap = 8, 6
+    local w = (300 - m * 2 - gap * (TAB_COUNT - 1)) / TAB_COUNT
     local btn = make("TextButton", {
-        Size = UDim2.new(0.5, -14, 0, 26),
-        Position = UDim2.new((order - 1) * 0.5, order == 1 and 10 or 4, 0, 44),
-        BackgroundColor3 = COL.element, Font = Enum.Font.GothamMedium, TextSize = 13,
+        Size = UDim2.new(0, w, 0, 26),
+        Position = UDim2.new(0, m + (order - 1) * (w + gap), 0, 44),
+        BackgroundColor3 = COL.element, Font = Enum.Font.GothamMedium, TextSize = 12,
         TextColor3 = COL.sub, Text = name, AutoButtonColor = false, BorderSizePixel = 0,
     }, main)
     round(btn, 7)
@@ -154,6 +120,8 @@ end
 
 local speedPage = makeTab("Speed", 1)
 local gravPage = makeTab("Gravity", 2)
+local espPage = makeTab("ESP", 3)
+local hitboxPage = makeTab("Hitbox", 4)
 
 function selectTab(name)
     for n, page in pairs(pages) do
@@ -322,6 +290,164 @@ connect(workspace:GetPropertyChangedSignal("Gravity"), function()
 end)
 updateGravUI()
 
+-- ========== ESP TAB ==========
+local espEnabled = false
+local drawingOk = (Drawing ~= nil) -- Drawing is an executor feature; guard so the hub still loads without it
+local espObjects = {} -- [player] = { box, name }
+
+row(espPage, 0, "Box ESP")
+make("TextLabel", {
+    Size = UDim2.new(1, 0, 0, 18), Position = UDim2.new(0, 0, 0, 36),
+    BackgroundTransparency = 1, Font = Enum.Font.Gotham, TextSize = 12,
+    TextColor3 = COL.sub, TextXAlignment = Enum.TextXAlignment.Left,
+    Text = drawingOk and "Draws a box + name over players" or "Unavailable: no Drawing API",
+}, espPage)
+
+local function newDrawing(class, props)
+    local d = Drawing.new(class)
+    for k, v in pairs(props) do d[k] = v end
+    return d
+end
+
+local function espHide(o)
+    o.box.Visible = false
+    o.name.Visible = false
+end
+
+local function espAdd(plr)
+    if not drawingOk or plr == player or espObjects[plr] then return end
+    espObjects[plr] = {
+        box = newDrawing("Square", {Thickness = 1.5, Color = COL.on, Filled = false, Visible = false}),
+        name = newDrawing("Text", {Size = 13, Center = true, Outline = true, Color = Color3.new(1, 1, 1), Visible = false}),
+    }
+end
+
+local function espRemove(plr)
+    local o = espObjects[plr]
+    if not o then return end
+    o.box:Remove()
+    o.name:Remove()
+    espObjects[plr] = nil
+end
+
+for _, plr in ipairs(Players:GetPlayers()) do espAdd(plr) end
+connect(Players.PlayerAdded, espAdd)
+connect(Players.PlayerRemoving, espRemove)
+
+local setEspSwitch, toggleEsp = makeSwitch(espPage, 0, false, function(on)
+    espEnabled = on and drawingOk
+    if not espEnabled then
+        for _, o in pairs(espObjects) do espHide(o) end
+    end
+end)
+
+connect(RunService.RenderStepped, function()
+    if not espEnabled then return end
+    local camera = workspace.CurrentCamera
+    for plr, o in pairs(espObjects) do
+        local ch = plr.Character
+        local rootPart = ch and ch:FindFirstChild("HumanoidRootPart")
+        local head = ch and ch:FindFirstChild("Head")
+        local hum = ch and ch:FindFirstChildOfClass("Humanoid")
+        if rootPart and head and hum and hum.Health > 0 then
+            local topPos = head.Position + Vector3.new(0, 0.5, 0)
+            local botPos = rootPart.Position - Vector3.new(0, 3, 0)
+            local top, onTop = camera:WorldToViewportPoint(topPos)
+            local bot = camera:WorldToViewportPoint(botPos)
+            if onTop then
+                local height = math.abs(bot.Y - top.Y)
+                local width = height * 0.5
+                o.box.Size = Vector2.new(width, height)
+                o.box.Position = Vector2.new(top.X - width / 2, top.Y)
+                o.box.Visible = true
+                local dist = (camera.CFrame.Position - rootPart.Position).Magnitude
+                o.name.Text = string.format("%s [%dm]", plr.Name, math.floor(dist))
+                o.name.Position = Vector2.new(top.X, top.Y - 16)
+                o.name.Visible = true
+            else
+                espHide(o)
+            end
+        else
+            espHide(o)
+        end
+    end
+end)
+
+-- ========== HITBOX TAB ==========
+local hitboxEnabled = false
+local hitboxVisible = true -- true = 25% visible red box (test), false = invisible
+local hitboxSize = 5
+local HITBOX_COLOR = Color3.fromRGB(255, 40, 40)
+local hbOriginals = {} -- [hrp] = {Size, Transparency, Color, CanCollide, Massless}
+
+local function hbStore(hrp)
+    if hbOriginals[hrp] then return end
+    hbOriginals[hrp] = {
+        Size = hrp.Size, Transparency = hrp.Transparency, Color = hrp.Color,
+        CanCollide = hrp.CanCollide, Massless = hrp.Massless,
+    }
+end
+
+local function hbRestoreAll()
+    for hrp, o in pairs(hbOriginals) do
+        if hrp and hrp.Parent then
+            hrp.Size = o.Size
+            hrp.Transparency = o.Transparency
+            hrp.Color = o.Color
+            hrp.CanCollide = o.CanCollide
+            hrp.Massless = o.Massless
+        end
+    end
+    hbOriginals = {}
+end
+
+row(hitboxPage, 0, "Hitbox extender")
+local setHbSwitch, toggleHb = makeSwitch(hitboxPage, 0, false, function(on)
+    hitboxEnabled = on
+    if not on then hbRestoreAll() end -- turning off snaps every hitbox back to normal
+end)
+
+row(hitboxPage, 36, "Show box (25%)")
+local setHbVis, toggleHbVis = makeSwitch(hitboxPage, 36, true, function(on)
+    hitboxVisible = on -- on = 25% visible, off = invisible
+end)
+
+row(hitboxPage, 72, "Size (1-10)")
+local hbBox = make("TextBox", {
+    Size = UDim2.new(0, 78, 0, 26), Position = UDim2.new(1, -78, 0, 70),
+    BackgroundColor3 = COL.element, Font = Enum.Font.Gotham, TextSize = 13,
+    TextColor3 = COL.text, Text = tostring(hitboxSize), PlaceholderText = "size",
+    PlaceholderColor3 = COL.sub, ClearTextOnFocus = false, BorderSizePixel = 0,
+}, hitboxPage)
+round(hbBox, 6)
+
+connect(hbBox.FocusLost, function()
+    local n = tonumber(hbBox.Text)
+    if n then hitboxSize = math.clamp(n, 1, 10) end
+    hbBox.Text = tostring(hitboxSize)
+end)
+
+connect(RunService.Heartbeat, function()
+    if not hitboxEnabled then return end
+    local sizeVec = Vector3.new(hitboxSize, hitboxSize, hitboxSize)
+    local tp = hitboxVisible and 0.75 or 1
+    for _, plr in ipairs(Players:GetPlayers()) do
+        if plr ~= player then
+            local ch = plr.Character
+            local hrp = ch and ch:FindFirstChild("HumanoidRootPart")
+            if hrp then
+                hbStore(hrp)
+                -- only rewrite physical props when they actually differ, so we don't
+                -- churn the physics assembly (that's what froze characters before)
+                if hrp.Size ~= sizeVec then hrp.Size = sizeVec end
+                if hrp.CanCollide then hrp.CanCollide = false end
+                hrp.Transparency = tp
+                hrp.Color = HITBOX_COLOR
+            end
+        end
+    end
+end)
+
 -- ========== DRAGGING ==========
 do
     local drag, start, pos
@@ -348,7 +474,6 @@ end
 connect(UIS.InputBegan, function(i, g)
     if g or i.UserInputType ~= Enum.UserInputType.Keyboard then return end
     if i.KeyCode == TOGGLE_KEY then
-        if keyChangeCooldown then return end
         main.Visible = not main.Visible
     elseif i.KeyCode == SPEED_KEY then
         toggleSpeed()
@@ -366,8 +491,22 @@ make("TextLabel", {
     TextColor3 = COL.sub, Text = VERSION, TextXAlignment = Enum.TextXAlignment.Right,
 }, main)
 
+-- unload button (just left of the version tag) — fully removes the script
+local unloadBtn = make("TextButton", {
+    Size = UDim2.new(0, 58, 0, 18), Position = UDim2.new(1, -132, 1, -22),
+    BackgroundColor3 = COL.on, Font = Enum.Font.GothamMedium, TextSize = 11,
+    TextColor3 = Color3.new(1, 1, 1), Text = "Unload", AutoButtonColor = false, BorderSizePixel = 0,
+}, main)
+round(unloadBtn, 5)
+connect(unloadBtn.MouseButton1Click, function()
+    click()
+    if _G.ScriptHubCleanup then _G.ScriptHubCleanup() end
+end)
+
 _G.ScriptHubCleanup = function()
     for _, c in ipairs(conns) do c:Disconnect() end
+    for plr in pairs(espObjects) do espRemove(plr) end
+    hbRestoreAll()
     gui:Destroy()
     _G.ScriptHubCleanup = nil
 end
