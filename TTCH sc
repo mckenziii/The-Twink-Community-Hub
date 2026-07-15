@@ -23,7 +23,10 @@ local function connect(sig, fn)
     return c
 end
 
+local VERSION = "BETAv1.2"
 local TOGGLE_KEY = Enum.KeyCode.K
+local SPEED_KEY = Enum.KeyCode.C
+local GRAV_KEY = Enum.KeyCode.G
 
 local COL = {
     bg      = Color3.fromRGB(24, 25, 31),
@@ -199,19 +202,9 @@ end)
 
 -- movement
 local keys = {W = false, A = false, S = false, D = false, Up = false, Down = false}
-local toggleGrav -- assigned in the gravity tab section below
 
 connect(UIS.InputBegan, function(i, g)
-    if g then return end
-    if i.KeyCode == TOGGLE_KEY then
-        main.Visible = not main.Visible
-    elseif i.KeyCode == Enum.KeyCode.C then
-        toggleSpeed()
-    elseif i.KeyCode == Enum.KeyCode.G and toggleGrav then
-        toggleGrav()
-    elseif keys[i.KeyCode.Name] ~= nil then
-        keys[i.KeyCode.Name] = true
-    end
+    if not g and keys[i.KeyCode.Name] ~= nil then keys[i.KeyCode.Name] = true end
 end)
 connect(UIS.InputEnded, function(i)
     if keys[i.KeyCode.Name] ~= nil then keys[i.KeyCode.Name] = false end
@@ -270,8 +263,7 @@ local function updateGravUI()
     if not gravBox:IsFocused() then gravBox.Text = ("%g"):format(workspace.Gravity) end
 end
 
-local setGravSwitch
-setGravSwitch, toggleGrav = makeSwitch(gravPage, 0, workspace.Gravity == 0, function(on)
+local setGravSwitch, toggleGrav = makeSwitch(gravPage, 0, workspace.Gravity == 0, function(on)
     if on then
         if workspace.Gravity ~= 0 then normalGravity = workspace.Gravity end
         workspace.Gravity = 0
@@ -314,10 +306,39 @@ do
     end)
 end
 
+-- ========== KEYBINDS ==========
+-- wired last, after every toggle exists: K = hide/show, C = cframe speed, G = zero gravity
+connect(UIS.InputBegan, function(i, g)
+    if g or i.UserInputType ~= Enum.UserInputType.Keyboard then return end
+    if i.KeyCode == TOGGLE_KEY then
+        main.Visible = not main.Visible
+    elseif i.KeyCode == SPEED_KEY then
+        toggleSpeed()
+    elseif i.KeyCode == GRAV_KEY then
+        toggleGrav()
+    end
+end)
+
 selectTab("Speed")
+
+-- version tag (bottom-right) so you can tell which copy is running
+make("TextLabel", {
+    Size = UDim2.new(0, 60, 0, 12), Position = UDim2.new(1, -66, 1, -16),
+    BackgroundTransparency = 1, Font = Enum.Font.Gotham, TextSize = 10,
+    TextColor3 = COL.sub, Text = VERSION, TextXAlignment = Enum.TextXAlignment.Right,
+}, main)
 
 _G.ScriptHubCleanup = function()
     for _, c in ipairs(conns) do c:Disconnect() end
     gui:Destroy()
     _G.ScriptHubCleanup = nil
 end
+
+-- load notification = proof this version actually ran
+pcall(function()
+    game:GetService("StarterGui"):SetCore("SendNotification", {
+        Title = "Twink Community Hub",
+        Text = VERSION .. " loaded | K hide | C speed | G gravity",
+        Duration = 4,
+    })
+end)
