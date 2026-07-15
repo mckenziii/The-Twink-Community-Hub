@@ -659,7 +659,132 @@ connect(player.Chatted, function(msg)
 
     cmd = cmd:lower()
 
-    if cmd == "tp" then
+
+    -- =========================
+    -- COMMAND BAR
+    -- =========================
+    if cmd == "cmdbar" then
+
+        if gui:FindFirstChild("CmdBar") then
+            gui.CmdBar:Destroy()
+            return
+        end
+
+        local cmdGui = make("Frame", {
+            Name = "CmdBar",
+            Size = UDim2.new(0, 420, 0, 45),
+            Position = UDim2.new(0.5, -210, 1, -80),
+            BackgroundColor3 = COL.bg,
+            BorderSizePixel = 0,
+        }, gui)
+
+        round(cmdGui, 10)
+
+        make("UIStroke", {
+            Color = COL.stroke,
+            Thickness = 1
+        }, cmdGui)
+
+
+        local box = make("TextBox", {
+            Size = UDim2.new(1, -20, 1, -10),
+            Position = UDim2.new(0, 10, 0, 5),
+
+            BackgroundColor3 = COL.element,
+
+            Font = Enum.Font.Gotham,
+            TextSize = 14,
+
+            TextColor3 = COL.text,
+
+            PlaceholderText = "!command player",
+            PlaceholderColor3 = COL.sub,
+
+            ClearTextOnFocus = false,
+
+            BorderSizePixel = 0,
+        }, cmdGui)
+
+        round(box, 7)
+
+
+        box.FocusLost:Connect(function(enter)
+
+            if not enter then return end
+
+            local input = box.Text
+            box.Text = ""
+
+            if input == "" then return end
+
+
+            if input:sub(1,1) ~= "!" then
+                input = "!" .. input
+            end
+
+
+            local c, a = input:sub(2):match("^(%S+)%s*(.-)$")
+
+            if not c then return end
+
+            c = c:lower()
+
+
+
+            -- =========================
+            -- CMD BAR COMMANDS
+            -- =========================
+
+            if c == "tp" then
+
+                local target = findPlayer(a)
+
+                if target then
+                    local targetHRP = target.Character and target.Character:FindFirstChild("HumanoidRootPart")
+                    local myHRP = player.Character and player.Character:FindFirstChild("HumanoidRootPart")
+
+                    if targetHRP and myHRP then
+                        myHRP.CFrame = targetHRP.CFrame + Vector3.new(0,0,3)
+                    end
+                end
+
+
+
+            elseif c == "sp" then
+
+                local target = findPlayer(a)
+
+                if target then
+                    local hum = target.Character and target.Character:FindFirstChildOfClass("Humanoid")
+
+                    if hum then
+                        workspace.CurrentCamera.CameraSubject = hum
+                    end
+                end
+
+
+
+            elseif c == "unsp" then
+
+                local myHum = player.Character and player.Character:FindFirstChildOfClass("Humanoid")
+
+                if myHum then
+                    workspace.CurrentCamera.CameraSubject = myHum
+                end
+
+            end
+        end)
+
+
+        box:CaptureFocus()
+
+
+
+    -- =========================
+    -- TELEPORT
+    -- =========================
+    elseif cmd == "tp" then
+
         local target = findPlayer(arg)
 
         if target then
@@ -672,8 +797,14 @@ connect(player.Chatted, function(msg)
         end
 
 
+
+    -- =========================
+    -- SPECTATE
+    -- =========================
     elseif cmd == "sp" then
+
         if arg ~= "" then
+
             local target = findPlayer(arg)
 
             if target then
@@ -685,20 +816,28 @@ connect(player.Chatted, function(msg)
             end
 
         else
+
             local myHum = player.Character and player.Character:FindFirstChildOfClass("Humanoid")
 
             if myHum then
                 workspace.CurrentCamera.CameraSubject = myHum
             end
+
         end
 
 
+
+    -- =========================
+    -- STOP SPECTATE
+    -- =========================
     elseif cmd == "unsp" then
+
         local myHum = player.Character and player.Character:FindFirstChildOfClass("Humanoid")
 
         if myHum then
             workspace.CurrentCamera.CameraSubject = myHum
         end
+
     end
 end)
 
