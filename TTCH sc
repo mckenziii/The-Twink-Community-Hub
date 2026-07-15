@@ -28,6 +28,9 @@ local TOGGLE_KEY = Enum.KeyCode.K
 local SPEED_KEY = Enum.KeyCode.C
 local GRAV_KEY = Enum.KeyCode.G
 
+local waitingForToggleKey = false
+local keyChangeCooldown = false
+
 local COL = {
     bg      = Color3.fromRGB(24, 25, 31),
     element = Color3.fromRGB(41, 44, 54),
@@ -80,12 +83,47 @@ make("TextLabel", {
     BackgroundTransparency = 1, Font = Enum.Font.GothamBold, TextSize = 14,
     TextColor3 = COL.text, Text = "The Twink Community Hub", TextXAlignment = Enum.TextXAlignment.Left,
 }, titleBar)
-local keyChip = make("TextLabel", {
-    Size = UDim2.new(0, 28, 0, 20), Position = UDim2.new(1, -36, 0, 8),
-    BackgroundColor3 = COL.element, Font = Enum.Font.Gotham, TextSize = 11,
-    TextColor3 = COL.sub, Text = "K", BorderSizePixel = 0,
+local keyChip = make("TextButton", {
+    Size = UDim2.new(0, 28, 0, 20),
+    Position = UDim2.new(1, -36, 0, 8),
+    BackgroundColor3 = COL.element,
+    Font = Enum.Font.Gotham,
+    TextSize = 11,
+    TextColor3 = COL.sub,
+    Text = TOGGLE_KEY.Name,
+    BorderSizePixel = 0,
+    AutoButtonColor = false,
 }, titleBar)
+
 round(keyChip, 6)
+
+connect(keyChip.MouseButton1Click, function()
+    if waitingForToggleKey then return end
+
+    waitingForToggleKey = true
+    keyChip.Text = "..."
+
+    local bind
+    bind = UIS.InputBegan:Connect(function(input, processed)
+        if processed then return end
+
+        if input.UserInputType == Enum.UserInputType.Keyboard then
+            TOGGLE_KEY = input.KeyCode
+            keyChip.Text = TOGGLE_KEY.Name
+
+            waitingForToggleKey = false
+            keyChangeCooldown = true
+
+            bind:Disconnect()
+
+            -- tiny delay so the new key press doesn't toggle UI instantly
+            task.delay(0.25, function()
+                keyChangeCooldown = false
+            end)
+        end
+    end)
+end)
+
 make("Frame", {
     Size = UDim2.new(1, -16, 0, 1), Position = UDim2.new(0, 8, 0, 36),
     BackgroundColor3 = COL.stroke, BorderSizePixel = 0,
@@ -474,6 +512,7 @@ end
 connect(UIS.InputBegan, function(i, g)
     if g or i.UserInputType ~= Enum.UserInputType.Keyboard then return end
     if i.KeyCode == TOGGLE_KEY then
+        if keyChangeCooldown then return end
         main.Visible = not main.Visible
     elseif i.KeyCode == SPEED_KEY then
         toggleSpeed()
