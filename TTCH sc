@@ -28,9 +28,6 @@ local TOGGLE_KEY = Enum.KeyCode.K
 local SPEED_KEY = Enum.KeyCode.C
 local GRAV_KEY = Enum.KeyCode.G
 
-local waitingForToggleKey = false
-local keyChangeCooldown = false
-
 local COL = {
     bg      = Color3.fromRGB(24, 25, 31),
     element = Color3.fromRGB(41, 44, 54),
@@ -75,7 +72,7 @@ local main = make("Frame", {
 }, gui)
 round(main, 10)
 make("UIStroke", {Color = COL.stroke, Thickness = 1}, main)
--- test push
+
 -- title bar
 local titleBar = make("Frame", {Size = UDim2.new(1, 0, 0, 36), BackgroundTransparency = 1}, main)
 make("TextLabel", {
@@ -83,47 +80,12 @@ make("TextLabel", {
     BackgroundTransparency = 1, Font = Enum.Font.GothamBold, TextSize = 14,
     TextColor3 = COL.text, Text = "The Twink Community Hub", TextXAlignment = Enum.TextXAlignment.Left,
 }, titleBar)
-local keyChip = make("TextButton", {
-    Size = UDim2.new(0, 28, 0, 20),
-    Position = UDim2.new(1, -36, 0, 8),
-    BackgroundColor3 = COL.element,
-    Font = Enum.Font.Gotham,
-    TextSize = 11,
-    TextColor3 = COL.sub,
-    Text = TOGGLE_KEY.Name,
-    BorderSizePixel = 0,
-    AutoButtonColor = false,
+local keyChip = make("TextLabel", {
+    Size = UDim2.new(0, 28, 0, 20), Position = UDim2.new(1, -36, 0, 8),
+    BackgroundColor3 = COL.element, Font = Enum.Font.Gotham, TextSize = 11,
+    TextColor3 = COL.sub, Text = "K", BorderSizePixel = 0,
 }, titleBar)
-
 round(keyChip, 6)
-
-connect(keyChip.MouseButton1Click, function()
-    if waitingForToggleKey then return end
-
-    waitingForToggleKey = true
-    keyChip.Text = "..."
-
-    local bind
-    bind = UIS.InputBegan:Connect(function(input, processed)
-        if processed then return end
-
-        if input.UserInputType == Enum.UserInputType.Keyboard then
-            TOGGLE_KEY = input.KeyCode
-            keyChip.Text = TOGGLE_KEY.Name
-
-            waitingForToggleKey = false
-            keyChangeCooldown = true
-
-            bind:Disconnect()
-
-            -- tiny delay so the new key press doesn't toggle UI instantly
-            task.delay(0.25, function()
-                keyChangeCooldown = false
-            end)
-        end
-    end)
-end)
-
 make("Frame", {
     Size = UDim2.new(1, -16, 0, 1), Position = UDim2.new(0, 8, 0, 36),
     BackgroundColor3 = COL.stroke, BorderSizePixel = 0,
@@ -133,14 +95,14 @@ make("Frame", {
 local pages, tabs = {}, {}
 local selectTab
 
-local TAB_COUNT = 4
+local TAB_COUNT = 5
 local function makeTab(name, order)
-    local m, gap = 8, 6
+    local m, gap = 8, 5
     local w = (300 - m * 2 - gap * (TAB_COUNT - 1)) / TAB_COUNT
     local btn = make("TextButton", {
         Size = UDim2.new(0, w, 0, 26),
         Position = UDim2.new(0, m + (order - 1) * (w + gap), 0, 44),
-        BackgroundColor3 = COL.element, Font = Enum.Font.GothamMedium, TextSize = 12,
+        BackgroundColor3 = COL.element, Font = Enum.Font.GothamMedium, TextSize = 11,
         TextColor3 = COL.sub, Text = name, AutoButtonColor = false, BorderSizePixel = 0,
     }, main)
     round(btn, 7)
@@ -160,6 +122,7 @@ local speedPage = makeTab("Speed", 1)
 local gravPage = makeTab("Gravity", 2)
 local espPage = makeTab("ESP", 3)
 local hitboxPage = makeTab("Hitbox", 4)
+local playerPage = makeTab("Player", 5)
 
 function selectTab(name)
     for n, page in pairs(pages) do
@@ -486,6 +449,137 @@ connect(RunService.Heartbeat, function()
     end
 end)
 
+-- ========== PLAYER TAB ==========
+
+local function findPlayer(txt)
+    txt = (txt or ""):lower()
+    if txt == "" then return nil end
+
+    for _, p in ipairs(Players:GetPlayers()) do
+        if p ~= player and (
+            p.Name:lower():sub(1, #txt) == txt or
+            p.DisplayName:lower():sub(1, #txt) == txt
+        ) then
+            return p
+        end
+    end
+end
+
+local playerMainRow = make("TextLabel", {
+    Size = UDim2.new(1, -10, 0, 28),
+    Position = UDim2.new(0, 5, -0.085, 0),
+    BackgroundTransparency = 1,
+    Font = Enum.Font.Gotham,
+    TextSize = 13,
+    TextColor3 = COL.text,
+    Text = "Player name",
+    TextXAlignment = Enum.TextXAlignment.Center,
+    TextYAlignment = Enum.TextYAlignment.Center,
+    TextScaled = true,
+    TextWrapped = false,
+}, playerPage)
+
+
+local playerBox = make("TextBox", {
+    Size = UDim2.new(1, 0, 0, 28),
+    Position = UDim2.new(0, 0, 0, 26),
+    BackgroundColor3 = COL.element,
+    Font = Enum.Font.Gotham,
+    TextSize = 13,
+    TextColor3 = COL.text,
+    PlaceholderText = "name or display name",
+    PlaceholderColor3 = COL.sub,
+    ClearTextOnFocus = false,
+    BorderSizePixel = 0,
+    Text = "",
+}, playerPage)
+
+round(playerBox, 6)
+
+local selectedPlayer = nil
+
+playerBox.FocusLost:Connect(function(enterPressed)
+    if not enterPressed then return end
+
+    local found = findPlayer(playerBox.Text)
+
+    if found then
+        selectedPlayer = found
+
+	playerMainRow.Text = string.format(
+    	"Player: %s, Username: %s, ID: %s",
+    	found.DisplayName,
+    	found.Name,
+    	found.UserId
+	)
+
+        playerBox.Text = found.Name
+    else
+        selectedPlayer = nil
+        playerMainRow.Text = "Player: Not found"
+    end
+end)
+
+local tpBtn = make("TextButton", {
+    Size = UDim2.new(0.5, -4, 0, 28), Position = UDim2.new(0, 0, 0, 62),
+    BackgroundColor3 = COL.accent, Font = Enum.Font.GothamMedium, TextSize = 13,
+    TextColor3 = Color3.new(1, 1, 1), Text = "Teleport", AutoButtonColor = false, BorderSizePixel = 0,
+}, playerPage)
+round(tpBtn, 6)
+
+local specBtn = make("TextButton", {
+    Size = UDim2.new(0.5, -4, 0, 28), Position = UDim2.new(0.5, 4, 0, 62),
+    BackgroundColor3 = COL.accent, Font = Enum.Font.GothamMedium, TextSize = 13,
+    TextColor3 = Color3.new(1, 1, 1), Text = "Spectate", AutoButtonColor = false, BorderSizePixel = 0,
+}, playerPage)
+round(specBtn, 6)
+
+local playerStatus = make("TextLabel", {
+    Size = UDim2.new(1, 0, 0, 18), Position = UDim2.new(0, 0, 0, 96),
+    BackgroundTransparency = 1, Font = Enum.Font.Gotham, TextSize = 12,
+    TextColor3 = COL.sub, Text = "", TextXAlignment = Enum.TextXAlignment.Left,
+}, playerPage)
+
+connect(tpBtn.MouseButton1Click, function()
+    click()
+    local target = findPlayer(playerBox.Text)
+    if not target then playerStatus.Text = "Player not found" return end
+    local thrp = target.Character and target.Character:FindFirstChild("HumanoidRootPart")
+    local mychar = player.Character
+    local myhrp = mychar and mychar:FindFirstChild("HumanoidRootPart")
+    if thrp and myhrp then
+        myhrp.CFrame = thrp.CFrame + Vector3.new(0, 0, 3)
+        playerStatus.Text = "Teleported to " .. target.Name
+    else
+        playerStatus.Text = "No character to teleport to"
+    end
+end)
+
+local spectating = nil
+connect(specBtn.MouseButton1Click, function()
+    click()
+    local cam = workspace.CurrentCamera
+    if spectating then
+        local myhum = player.Character and player.Character:FindFirstChildOfClass("Humanoid")
+        if myhum then cam.CameraSubject = myhum end
+        spectating = nil
+        specBtn.Text = "Spectate"
+        playerStatus.Text = "Stopped spectating"
+    else
+        local target = findPlayer(playerBox.Text)
+        if not target then playerStatus.Text = "Player not found" return end
+        local thum = target.Character and target.Character:FindFirstChildOfClass("Humanoid")
+        if thum then
+            cam.CameraSubject = thum
+            spectating = target
+            specBtn.Text = "Stop Spec"
+            playerStatus.Text = "Spectating " .. target.Name
+        else
+            playerStatus.Text = "No character to spectate"
+        end
+    end
+end)
+
 -- ========== DRAGGING ==========
 do
     local drag, start, pos
@@ -512,7 +606,6 @@ end
 connect(UIS.InputBegan, function(i, g)
     if g or i.UserInputType ~= Enum.UserInputType.Keyboard then return end
     if i.KeyCode == TOGGLE_KEY then
-        if keyChangeCooldown then return end
         main.Visible = not main.Visible
     elseif i.KeyCode == SPEED_KEY then
         toggleSpeed()
@@ -542,10 +635,66 @@ connect(unloadBtn.MouseButton1Click, function()
     if _G.ScriptHubCleanup then _G.ScriptHubCleanup() end
 end)
 
+connect(player.Chatted, function(msg)
+    if msg:sub(1, 1) ~= "!" then return end
+
+    local cmd, arg = msg:sub(2):match("^(%S+)%s*(.-)$")
+    if not cmd then return end
+
+    cmd = cmd:lower()
+
+    if cmd == "tp" then
+        local target = findPlayer(arg)
+
+        if target then
+            local targetHRP = target.Character and target.Character:FindFirstChild("HumanoidRootPart")
+            local myHRP = player.Character and player.Character:FindFirstChild("HumanoidRootPart")
+
+            if targetHRP and myHRP then
+                myHRP.CFrame = targetHRP.CFrame + Vector3.new(0,0,3)
+            end
+        end
+
+
+    elseif cmd == "sp" then
+        if arg ~= "" then
+            local target = findPlayer(arg)
+
+            if target then
+                local hum = target.Character and target.Character:FindFirstChildOfClass("Humanoid")
+
+                if hum then
+                    workspace.CurrentCamera.CameraSubject = hum
+                end
+            end
+
+        else
+            local myHum = player.Character and player.Character:FindFirstChildOfClass("Humanoid")
+
+            if myHum then
+                workspace.CurrentCamera.CameraSubject = myHum
+            end
+        end
+
+
+    elseif cmd == "unsp" then
+        local myHum = player.Character and player.Character:FindFirstChildOfClass("Humanoid")
+
+        if myHum then
+            workspace.CurrentCamera.CameraSubject = myHum
+        end
+    end
+end)
+
 _G.ScriptHubCleanup = function()
     for _, c in ipairs(conns) do c:Disconnect() end
     for plr in pairs(espObjects) do espRemove(plr) end
     hbRestoreAll()
+    -- make sure we're not left stuck in someone else's camera
+    pcall(function()
+        local myhum = player.Character and player.Character:FindFirstChildOfClass("Humanoid")
+        if myhum then workspace.CurrentCamera.CameraSubject = myhum end
+    end)
     gui:Destroy()
     _G.ScriptHubCleanup = nil
 end
