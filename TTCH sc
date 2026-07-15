@@ -25,21 +25,18 @@ end
 
 local VERSION = "Unknown"
 
-local function getVersion()
-    local success, result = pcall(function()
-        return game:HttpGet(
-            "https://raw.githubusercontent.com/mckenziii/The-Twink-Community-Hub/main/version.txt?nocache=" .. os.time()
-        )
-    end)
+local url = "https://raw.githubusercontent.com/mckenziii/The-Twink-Community-Hub/refs/heads/main/version.txt?t=" .. os.time()
 
-    if success then
-        VERSION = result:gsub("%s+", "")
-    else
-        warn("Version failed:", result)
-    end
+local req = (syn and syn.request) or http_request or request
+
+local response = req({
+    Url = url,
+    Method = "GET"
+})
+
+if response and response.Body then
+    VERSION = response.Body:gsub("%s+", "")
 end
-
-getVersion()
 
 print("Loaded Version:", VERSION)
 
