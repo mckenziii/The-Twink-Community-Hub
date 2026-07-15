@@ -873,7 +873,7 @@ local toolsLayout = make("UIListLayout", {
 -- add a tool by giving it a name + run function; unset slots stay placeholders
 local toolDefs = {
     [1] = {name = "Jerk off", run = function()
-        loadstring(game:HttpGet("https://raw.githubusercontent.com/mckenziii/yankle-doodle/refs/heads/main/yankle%20doodle%20sc"))()
+        loadstring(game:HttpGet("https://raw.githubusercontent.com/mckenziii/The-Twink-Community-Hub/refs/heads/main/Tools/jerkoff.lua"))()
     end},
 }
 
