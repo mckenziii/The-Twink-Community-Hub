@@ -47,6 +47,25 @@ local GRAV_KEY = Enum.KeyCode.G
 local waitingForToggleKey = false
 local keyChangeCooldown = false
 
+local function runScript(url)
+	local success, src = pcall(function()
+		return game:HttpGet(url)
+	end)
+
+	if not success then
+		warn("Failed to fetch:", url)
+		return
+	end
+
+	local fn, err = loadstring(src)
+
+	if fn then
+		pcall(fn)
+	else
+		warn("Load error:", err)
+	end
+end
+
 local COL = {
     bg      = Color3.fromRGB(24, 25, 31),
     element = Color3.fromRGB(41, 44, 54),
@@ -1279,7 +1298,7 @@ connect(player.Chatted, function(msg)
             end
         end
     elseif cmd == "clicktp" then 
-        loadstring(game:HttpGet("https://raw.githubusercontent.com/mckenziii/The-Twink-Community-Hub/refs/heads/main/util/syn'stptool.lua"))()
+        runScript("loadstring(game:HttpGet("https://raw.githubusercontent.com/mckenziii/The-Twink-Community-Hub/refs/heads/main/util/syn'stptool.lua"))()")
 
     -- =========================
     -- SPECTATE
