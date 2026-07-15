@@ -748,6 +748,104 @@ connect(player.Chatted, function(msg)
                     end
                 end
 
+                elseif c == "help" then
+
+    if gui:FindFirstChild("HelpUI") then
+        gui.HelpUI:Destroy()
+        return
+    end
+
+    local help = make("Frame", {
+        Name = "HelpUI",
+        Size = UDim2.new(0, 360, 0, 420),
+        Position = UDim2.new(0.5, -180, 0.5, -210),
+        BackgroundColor3 = COL.bg,
+        BorderSizePixel = 0,
+        Active = true,
+    }, gui)
+
+    round(help, 10)
+
+    make("UIStroke", {
+        Color = COL.stroke,
+        Thickness = 1
+    }, help)
+
+
+    local title = make("TextLabel", {
+        Size = UDim2.new(1, -40, 0, 35),
+        Position = UDim2.new(0, 15, 0, 0),
+        BackgroundTransparency = 1,
+        Font = Enum.Font.GothamBold,
+        TextSize = 16,
+        TextColor3 = COL.text,
+        Text = "Twink Hub Commands",
+        TextXAlignment = Enum.TextXAlignment.Left,
+    }, help)
+
+
+    local close = make("TextButton", {
+        Size = UDim2.new(0, 28, 0, 28),
+        Position = UDim2.new(1, -35, 0, 5),
+        BackgroundColor3 = COL.on,
+        Text = "X",
+        Font = Enum.Font.GothamBold,
+        TextSize = 14,
+        TextColor3 = Color3.new(1,1,1),
+        BorderSizePixel = 0,
+    }, help)
+
+    round(close, 6)
+
+    close.MouseButton1Click:Connect(function()
+        help:Destroy()
+    end)
+
+
+    local scroll = make("ScrollingFrame", {
+        Size = UDim2.new(1, -20, 1, -55),
+        Position = UDim2.new(0, 10, 0, 45),
+        BackgroundTransparency = 1,
+        BorderSizePixel = 0,
+        ScrollBarThickness = 4,
+        CanvasSize = UDim2.new(0,0,0,0),
+    }, help)
+
+
+    local commands = {
+        "!tp <player>",
+        "!sp <player>",
+        "!unsp",
+        "!cmdbar",
+        "!help",
+        "!runcode <lua>",
+        "!lua <lua>",
+    }
+
+
+    local y = 5
+
+    for _, text in ipairs(commands) do
+
+        local label = make("TextLabel", {
+            Size = UDim2.new(1, -10, 0, 28),
+            Position = UDim2.new(0, 5, 0, y),
+            BackgroundColor3 = COL.element,
+            Font = Enum.Font.Gotham,
+            TextSize = 13,
+            TextColor3 = COL.text,
+            Text = text,
+            BorderSizePixel = 0,
+            TextXAlignment = Enum.TextXAlignment.Left,
+        }, scroll)
+
+        round(label, 6)
+
+        y += 33
+    end
+
+    scroll.CanvasSize = UDim2.new(0,0,0,y)
+
 
 
             elseif c == "sp" then
@@ -761,6 +859,34 @@ connect(player.Chatted, function(msg)
                         workspace.CurrentCamera.CameraSubject = hum
                     end
                 end
+
+			elseif c == "runcode" or c == "lua" then
+
+    			if not loadstring then
+    	    			warn("loadstring is not available")
+    	    		return
+    			end
+
+    			local code = a
+
+    			if not code or code == "" then
+    	    		warn("No code provided")
+    	    		return
+    			end
+
+    			local fn, err = loadstring(code)
+
+    			if not fn then
+    			    warn("Load error:", err)
+    			    return
+    			end
+
+    			local success, result = pcall(fn)
+
+    			if not success then
+    			    warn("Runtime error:", result)
+    			    return
+    			end
 
 
 
@@ -825,7 +951,176 @@ connect(player.Chatted, function(msg)
 
         end
 
+    elseif cmd == "help" then
 
+    if gui:FindFirstChild("HelpUI") then
+        gui.HelpUI:Destroy()
+        return
+    end
+
+    local help = make("Frame", {
+        Name = "HelpUI",
+        Size = UDim2.new(0, 360, 0, 420),
+        Position = UDim2.new(0.5, -180, 0.5, -210),
+        BackgroundColor3 = COL.bg,
+        BorderSizePixel = 0,
+        Active = true,
+    }, gui)
+
+    round(help, 10)
+
+    make("UIStroke", {
+        Color = COL.stroke,
+        Thickness = 1
+    }, help)
+
+
+    local title = make("TextLabel", {
+        Size = UDim2.new(1, -40, 0, 35),
+        Position = UDim2.new(0, 15, 0, 0),
+        BackgroundTransparency = 1,
+        Font = Enum.Font.GothamBold,
+        TextSize = 16,
+        TextColor3 = COL.text,
+        Text = "Twink Hub Commands",
+        TextXAlignment = Enum.TextXAlignment.Left,
+    }, help)
+
+
+    local close = make("TextButton", {
+        Size = UDim2.new(0, 28, 0, 28),
+        Position = UDim2.new(1, -35, 0, 5),
+        BackgroundColor3 = COL.on,
+        Text = "X",
+        Font = Enum.Font.GothamBold,
+        TextSize = 14,
+        TextColor3 = Color3.new(1,1,1),
+        BorderSizePixel = 0,
+    }, help)
+
+    round(close, 6)
+
+    close.MouseButton1Click:Connect(function()
+        help:Destroy()
+    end)
+
+
+
+    local scroll = make("ScrollingFrame", {
+        Size = UDim2.new(1, -20, 1, -55),
+        Position = UDim2.new(0, 10, 0, 45),
+        BackgroundTransparency = 1,
+        BorderSizePixel = 0,
+        ScrollBarThickness = 4,
+        CanvasSize = UDim2.new(0,0,0,0),
+    }, help)
+
+
+    local commands = {
+        "!tp <player> - Teleport to player",
+        "!sp <player> - Spectate player",
+        "!unsp - Stop spectating",
+        "!cmdbar - Open command bar",
+        "!help - Open this menu",
+        "!runcode <lua> - Execute Lua code",
+        "!lua <lua> - Execute Lua code",
+    }
+
+
+    local y = 5
+
+    for _, text in ipairs(commands) do
+
+        local label = make("TextLabel", {
+            Size = UDim2.new(1, -10, 0, 28),
+            Position = UDim2.new(0, 5, 0, y),
+            BackgroundColor3 = COL.element,
+            Font = Enum.Font.Gotham,
+            TextSize = 13,
+            TextColor3 = COL.text,
+            Text = text,
+            BorderSizePixel = 0,
+            TextXAlignment = Enum.TextXAlignment.Left,
+        }, scroll)
+
+        round(label, 6)
+
+        y += 33
+    end
+
+    scroll.CanvasSize = UDim2.new(0,0,0,y)
+
+
+
+    -- DRAGGING
+    local dragging = false
+    local dragStart
+    local startPos
+
+    title.InputBegan:Connect(function(input)
+
+        if input.UserInputType == Enum.UserInputType.MouseButton1 then
+
+            dragging = true
+            dragStart = input.Position
+            startPos = help.Position
+
+        end
+    end)
+
+
+    UIS.InputChanged:Connect(function(input)
+
+        if dragging and input.UserInputType == Enum.UserInputType.MouseMovement then
+
+            local delta = input.Position - dragStart
+
+            help.Position = UDim2.new(
+                startPos.X.Scale,
+                startPos.X.Offset + delta.X,
+                startPos.Y.Scale,
+                startPos.Y.Offset + delta.Y
+            )
+
+        end
+    end)
+
+
+    UIS.InputEnded:Connect(function(input)
+
+        if input.UserInputType == Enum.UserInputType.MouseButton1 then
+            dragging = false
+        end
+
+    end)
+    
+	elseif cmd == "runcode" or cmd == "lua" then
+
+    	if not loadstring then
+    	    warn("loadstring is not available")
+    	    return
+    	end
+
+    	local code = arg
+
+    	if not code or code == "" then
+    	    warn("No code provided")
+    	    return
+    	end
+
+    	local fn, err = loadstring(code)
+
+    	if not fn then
+    	    warn("Load error:", err)
+    	    return
+    	end
+
+    	local success, result = pcall(fn)
+
+    	if not success then
+    	    warn("Runtime error:", result)
+    	    return
+    	end
 
     -- =========================
     -- STOP SPECTATE
