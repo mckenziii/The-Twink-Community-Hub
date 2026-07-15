@@ -877,6 +877,12 @@ local toolDefs = {
     end},
 }
 
+local toolDefs = {
+    [2] = {name = "Teleport tool", run = function()
+        loadstring(game:HttpGet("https://raw.githubusercontent.com/mckenziii/The-Twink-Community-Hub/refs/heads/main/Tools/tptool.lua"))()
+    end},
+}
+
 
 for i = 1, 10 do
     local def = toolDefs[i]
