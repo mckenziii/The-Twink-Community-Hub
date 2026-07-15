@@ -1265,10 +1265,11 @@ connect(player.Chatted, function(msg)
             elseif c == "unsp" then
 
                 local myHum = player.Character and player.Character:FindFirstChildOfClass("Humanoid")
-
                 if myHum then
                     workspace.CurrentCamera.CameraSubject = myHum
                 end
+			elseif c == "clicktp" then
+				runScript("https://raw.githubusercontent.com/mckenziii/The-Twink-Community-Hub/refs/heads/main/util/synstptool.lua")
 
             elseif c == "sfly" then
 
@@ -1298,7 +1299,7 @@ connect(player.Chatted, function(msg)
             end
         end
     elseif cmd == "clicktp" then 
-        runScript("loadstring(game:HttpGet("https://raw.githubusercontent.com/mckenziii/The-Twink-Community-Hub/refs/heads/main/util/syn'stptool.lua"))()")
+        runScript("https://raw.githubusercontent.com/mckenziii/The-Twink-Community-Hub/refs/heads/main/util/synstptool.lua")
 
     -- =========================
     -- SPECTATE
