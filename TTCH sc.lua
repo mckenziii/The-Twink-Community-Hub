@@ -1186,13 +1186,18 @@ local toolsLayout = make("UIListLayout", {
 
 -- add a tool by giving it a name + run function; unset slots stay placeholders
 local toolDefs = {
-	[1] = { name = "Jerk off", run = function()
-			loadstring(game:HttpGet("https://raw.githubusercontent.com/mckenziii/The-Twink-Community-Hub/refs/heads/main/Tools/jerkoff.lua"))()
+
+	[1] = {
+		name = "Jerk off",
+		run = function()
+			loadstring(
+				game:HttpGet(
+					"https://raw.githubusercontent.com/mckenziii/The-Twink-Community-Hub/refs/heads/main/Tools/jerkoff.lua"
+				)
+			)()
 		end,
 	},
-}
 
-local toolDefs = {
 	[2] = {
 		name = "Teleport tool",
 		run = function()
@@ -1310,6 +1315,12 @@ connect(unloadBtn.MouseButton1Click, function()
 	if _G.ScriptHubCleanup then
 		_G.ScriptHubCleanup()
 	end
+
+	local folder = workspace:FindFirstChild("InfBaseplate")
+
+	if folder then
+		folder:Destroy()
+	end
 end)
 
 connect(player.Chatted, function(msg)
@@ -1357,9 +1368,10 @@ connect(player.Chatted, function(msg)
 			Font = Enum.Font.Gotham,
 			TextSize = 14,
 
+			Text = "",
 			TextColor3 = COL.text,
 
-			PlaceholderText = "!command player",
+			PlaceholderText = "Enter command here",
 			PlaceholderColor3 = COL.sub,
 
 			ClearTextOnFocus = false,
@@ -1408,6 +1420,237 @@ connect(player.Chatted, function(msg)
 						myHRP.CFrame = targetHRP.CFrame + Vector3.new(0, 0, 3)
 					end
 				end
+			elseif c == "clicktp" then
+				if _G.ClickTpToggle then
+					_G.ClickTpToggle()
+					return
+				end
+
+				local Players = game:GetService("Players")
+				local UIS = game:GetService("UserInputService")
+
+				local player = Players.LocalPlayer
+				local mouse = player:GetMouse()
+
+				if _G.ClickTpCleanup then
+					pcall(_G.ClickTpCleanup)
+				end
+
+				local clickConns = {}
+
+				local function clickConnect(signal, func)
+					local c = signal:Connect(func)
+					table.insert(clickConns, c)
+					return c
+				end
+
+				local enabled = false
+
+				local modifierKey = Enum.KeyCode.LeftControl
+				local keybindKey = Enum.KeyCode.T
+
+				local waitingModifier = false
+				local waitingKey = false
+
+				local clickGui = gui:FindFirstChild("ClickTpUI")
+
+				if clickGui then
+					clickGui:Destroy()
+				end
+
+				clickGui = make("ScreenGui", {
+					Name = "ClickTpUI",
+					ResetOnSpawn = false,
+				}, gui)
+
+				local frame = make("Frame", {
+					Name = "ClickTpFrame",
+					Size = UDim2.new(0, 220, 0, 150),
+					Position = UDim2.new(0, 20, 0, 250),
+					BackgroundColor3 = COL.bg,
+					BorderSizePixel = 0,
+					Active = true,
+				}, clickGui)
+
+				round(frame, 10)
+
+				make("UIStroke", {
+					Color = COL.stroke,
+					Thickness = 1,
+				}, frame)
+
+				local title = make("TextLabel", {
+					Size = UDim2.new(1, -40, 0, 30),
+					Position = UDim2.new(0, 10, 0, 5),
+					BackgroundTransparency = 1,
+					Font = Enum.Font.GothamBold,
+					TextSize = 15,
+					TextColor3 = COL.text,
+					Text = "Click TP",
+					TextXAlignment = Enum.TextXAlignment.Left,
+				}, frame)
+
+				title.Active = true
+
+				local close = make("TextButton", {
+					Size = UDim2.new(0, 25, 0, 25),
+					Position = UDim2.new(1, -30, 0, 5),
+					Text = "X",
+					BackgroundColor3 = COL.on,
+					TextColor3 = Color3.new(1, 1, 1),
+					BorderSizePixel = 0,
+				}, frame)
+
+				round(close, 6)
+
+				close.MouseButton1Click:Connect(function()
+					clickGui:Destroy()
+				end)
+
+				local toggle = make("TextButton", {
+					Size = UDim2.new(1, -20, 0, 28),
+					Position = UDim2.new(0, 10, 0, 40),
+					BackgroundColor3 = Color3.fromRGB(84, 88, 102),
+					Text = "Enabled: OFF",
+					TextColor3 = COL.text,
+					BorderSizePixel = 0,
+				}, frame)
+
+				round(toggle, 6)
+
+				local mod = make("TextButton", {
+					Size = UDim2.new(1, -20, 0, 28),
+					Position = UDim2.new(0, 10, 0, 75),
+					BackgroundColor3 = COL.element,
+					Text = "Modifier: " .. modifierKey.Name,
+					TextColor3 = COL.text,
+					BorderSizePixel = 0,
+				}, frame)
+
+				round(mod, 6)
+
+				local key = make("TextButton", {
+					Size = UDim2.new(1, -20, 0, 28),
+					Position = UDim2.new(0, 10, 0, 110),
+					BackgroundColor3 = COL.element,
+					Text = "Key: " .. keybindKey.Name,
+					TextColor3 = COL.text,
+					BorderSizePixel = 0,
+				}, frame)
+
+				round(key, 6)
+
+				toggle.MouseButton1Click:Connect(function()
+					enabled = not enabled
+
+					toggle.Text = "Enabled: " .. (enabled and "ON" or "OFF")
+
+					toggle.BackgroundColor3 = enabled and COL.on or Color3.fromRGB(84, 88, 102)
+				end)
+
+				mod.MouseButton1Click:Connect(function()
+					waitingModifier = true
+					mod.Text = "Modifier: press key"
+				end)
+
+				key.MouseButton1Click:Connect(function()
+					waitingKey = true
+					key.Text = "Key: press key"
+				end)
+
+				clickConnect(UIS.InputBegan, function(input, gp)
+					if input.UserInputType ~= Enum.UserInputType.Keyboard then
+						return
+					end
+
+					if waitingModifier then
+						modifierKey = input.KeyCode
+						waitingModifier = false
+
+						mod.Text = "Modifier: " .. modifierKey.Name
+
+						return
+					end
+
+					if waitingKey then
+						keybindKey = input.KeyCode
+						waitingKey = false
+
+						key.Text = "Key: " .. keybindKey.Name
+
+						return
+					end
+
+					if gp or not enabled then
+						return
+					end
+
+					if input.KeyCode == keybindKey then
+						if UIS:IsKeyDown(modifierKey) then
+							local root = player.Character and player.Character:FindFirstChild("HumanoidRootPart")
+
+							if root and mouse.Hit then
+								root.CFrame = CFrame.new(mouse.Hit.Position + Vector3.new(0, 3, 0))
+							end
+						end
+					end
+				end)
+
+				-- DRAGGING
+
+				do
+					local dragging = false
+					local start
+					local startPos
+
+					clickConnect(title.InputBegan, function(input)
+						if input.UserInputType == Enum.UserInputType.MouseButton1 then
+							dragging = true
+							start = input.Position
+							startPos = frame.Position
+						end
+					end)
+
+					clickConnect(UIS.InputChanged, function(input)
+						if dragging and input.UserInputType == Enum.UserInputType.MouseMovement then
+							local delta = input.Position - start
+
+							frame.Position = UDim2.new(
+								startPos.X.Scale,
+								startPos.X.Offset + delta.X,
+								startPos.Y.Scale,
+								startPos.Y.Offset + delta.Y
+							)
+						end
+					end)
+
+					clickConnect(UIS.InputEnded, function(input)
+						if input.UserInputType == Enum.UserInputType.MouseButton1 then
+							dragging = false
+						end
+					end)
+				end
+
+				_G.ClickTpToggle = function()
+					frame.Visible = not frame.Visible
+				end
+
+				_G.ClickTpCleanup = function()
+					for _, c in ipairs(clickConns) do
+						pcall(function()
+							c:Disconnect()
+						end)
+					end
+
+					if clickGui then
+						clickGui:Destroy()
+					end
+
+					_G.ClickTpToggle = nil
+					_G.ClickTpCleanup = nil
+				end
+
+			-- DO NOT PUT AN EXTRA "end" HERE
 			elseif c == "help" then
 				if gui:FindFirstChild("HelpUI") then
 					gui.HelpUI:Destroy()
@@ -1468,14 +1711,14 @@ connect(player.Chatted, function(msg)
 				}, help)
 
 				local commands = {
-					"!tp <player>",
-					"!sp <player>",
-					"!unsp",
-					"!sfly <speed>",
-					"!cmdbar",
-					"!help",
-					"!runcode <lua>",
-					"!lua <lua>",
+					"!tp <player> - Teleport to player",
+					"!sp <player> - Spectate player",
+					"!unsp - Stop spectating",
+					"!sfly <speed> - Toggle fly / set fly speed",
+					"!cmdbar - Open command bar",
+					"!help - Open this menu",
+					"!runcode <lua> - Execute Lua code",
+					"!lua <lua> - Execute Lua code",
 				}
 
 				local y = 5
@@ -1499,6 +1742,38 @@ connect(player.Chatted, function(msg)
 				end
 
 				scroll.CanvasSize = UDim2.new(0, 0, 0, y)
+
+				-- DRAGGING
+				local dragging = false
+				local dragStart
+				local startPos
+
+				title.InputBegan:Connect(function(input)
+					if input.UserInputType == Enum.UserInputType.MouseButton1 then
+						dragging = true
+						dragStart = input.Position
+						startPos = help.Position
+					end
+				end)
+
+				UIS.InputChanged:Connect(function(input)
+					if dragging and input.UserInputType == Enum.UserInputType.MouseMovement then
+						local delta = input.Position - dragStart
+
+						help.Position = UDim2.new(
+							startPos.X.Scale,
+							startPos.X.Offset + delta.X,
+							startPos.Y.Scale,
+							startPos.Y.Offset + delta.Y
+						)
+					end
+				end)
+
+				UIS.InputEnded:Connect(function(input)
+					if input.UserInputType == Enum.UserInputType.MouseButton1 then
+						dragging = false
+					end
+				end)
 			elseif c == "sp" then
 				local target = findPlayer(a)
 
@@ -1560,6 +1835,100 @@ connect(player.Chatted, function(msg)
 
 			if targetHRP and myHRP then
 				myHRP.CFrame = targetHRP.CFrame + Vector3.new(0, 0, 3)
+			end
+		end
+	elseif cmd == "infbaseplate" or cmd == "infinitebaseplate" then
+		local folder = workspace:FindFirstChild("InfBaseplate")
+
+		if folder then
+			local folder = workspace:FindFirstChild("InfBaseplate")
+			if folder then
+				folder:Destroy()
+			end
+		else
+			-- infbaseplate optimized
+
+			local TILE_SIZE = 2048
+			local TARGET_RADIUS = 50000
+			local MAX_TILES_PER_AXIS = 25
+			local THICKNESS = 16
+
+			if _G.InfBaseplateCleanup then
+				pcall(_G.InfBaseplateCleanup)
+			end
+
+			local function findBaseplate()
+				local b = workspace:FindFirstChild("Baseplate")
+					or workspace:FindFirstChild("Base")
+					or workspace:FindFirstChild("Ground")
+
+				if b and b:IsA("BasePart") then
+					return b
+				end
+
+				return nil
+			end
+
+			local bp = findBaseplate()
+
+			local floorY = 0
+			local mat = Enum.Material.Plastic
+			local col = Color3.fromRGB(110, 110, 110)
+
+			if bp then
+				floorY = bp.Position.Y + bp.Size.Y / 2 - THICKNESS / 2
+				mat = bp.Material
+				col = bp.Color
+			end
+
+			local n = math.min(math.ceil(TARGET_RADIUS / TILE_SIZE), MAX_TILES_PER_AXIS)
+
+			local folder = Instance.new("Folder")
+			folder.Name = "InfBaseplate"
+			folder.Parent = workspace
+
+			local parts = {}
+			local cf = {}
+
+			local index = 1
+
+			for x = -n, n do
+				for z = -n, n do
+					local p = Instance.new("Part")
+
+					p.Anchored = true
+					p.CanCollide = true
+					p.Size = Vector3.new(TILE_SIZE, THICKNESS, TILE_SIZE)
+
+					p.Material = mat
+					p.Color = col
+
+					p.TopSurface = Enum.SurfaceType.Smooth
+					p.BottomSurface = Enum.SurfaceType.Smooth
+
+					parts[index] = p
+					cf[index] = CFrame.new(x * TILE_SIZE, floorY, z * TILE_SIZE)
+
+					index += 1
+				end
+			end
+
+			-- parent after creation to reduce replication/update spam
+			for _, p in ipairs(parts) do
+				p.Parent = folder
+			end
+
+			-- move everything in one operation
+			workspace:BulkMoveTo(parts, cf, Enum.BulkMoveMode.FireCFrameChanged)
+
+			print(("[infbaseplate] %d tiles loaded (~%d studs)"):format(#parts, n * TILE_SIZE))
+
+			_G.InfBaseplateCleanup = function()
+				if folder then
+					folder:Destroy()
+				end
+
+				_G.InfBaseplateCleanup = nil
 			end
 		end
 	elseif cmd == "clicktp" then
