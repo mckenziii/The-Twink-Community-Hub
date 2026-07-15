@@ -153,22 +153,23 @@ local function makeSwitch(parent, y, initial, onChanged)
         tween(btn, {BackgroundColor3 = state and COL.on or COL.off})
         tween(knob, {Position = state and UDim2.new(1, -19, 0.5, -8) or UDim2.new(0, 3, 0.5, -8)})
     end
-    connect(btn.MouseButton1Click, function()
+    local function toggle()
         click()
         state = not state
         render()
         onChanged(state)
-    end)
-    -- setter to sync visuals from outside without firing the callback
+    end
+    connect(btn.MouseButton1Click, toggle)
+    -- returns: setter to sync visuals without firing the callback, and toggle (same as clicking)
     return function(newState)
         if newState ~= state then state = newState render() end
-    end
+    end, toggle
 end
 
 -- ========== SPEED TAB ==========
 local speedEnabled = false
-row(speedPage, 0, "CFrame movement")
-makeSwitch(speedPage, 0, false, function(on) speedEnabled = on end)
+row(speedPage, 0, "CFrame movement [C]")
+local setSpeedSwitch, toggleSpeed = makeSwitch(speedPage, 0, false, function(on) speedEnabled = on end)
 
 row(speedPage, 36, "Speed (0-99999)")
 local speedBox = make("TextBox", {
@@ -198,11 +199,16 @@ end)
 
 -- movement
 local keys = {W = false, A = false, S = false, D = false, Up = false, Down = false}
+local toggleGrav -- assigned in the gravity tab section below
 
 connect(UIS.InputBegan, function(i, g)
     if g then return end
     if i.KeyCode == TOGGLE_KEY then
         main.Visible = not main.Visible
+    elseif i.KeyCode == Enum.KeyCode.C then
+        toggleSpeed()
+    elseif i.KeyCode == Enum.KeyCode.G and toggleGrav then
+        toggleGrav()
     elseif keys[i.KeyCode.Name] ~= nil then
         keys[i.KeyCode.Name] = true
     end
@@ -242,7 +248,7 @@ end)
 local normalGravity = workspace.Gravity
 if normalGravity == 0 then normalGravity = 196.2 end
 
-row(gravPage, 0, "Zero gravity")
+row(gravPage, 0, "Zero gravity [G]")
 
 row(gravPage, 36, "Gravity (0-500)")
 local gravBox = make("TextBox", {
@@ -264,7 +270,8 @@ local function updateGravUI()
     if not gravBox:IsFocused() then gravBox.Text = ("%g"):format(workspace.Gravity) end
 end
 
-local setGravSwitch = makeSwitch(gravPage, 0, workspace.Gravity == 0, function(on)
+local setGravSwitch
+setGravSwitch, toggleGrav = makeSwitch(gravPage, 0, workspace.Gravity == 0, function(on)
     if on then
         if workspace.Gravity ~= 0 then normalGravity = workspace.Gravity end
         workspace.Gravity = 0
