@@ -496,20 +496,46 @@ updateGravUI()
 
 -- ========== ESP TAB ==========
 local espEnabled = false
+local espBox = true
+local espDistance = true
+local espHealth = false
+local espSkeleton = false
 local drawingOk = (Drawing ~= nil) -- Drawing is an executor feature; guard so the hub still loads without it
-local espObjects = {} -- [player] = { box, name }
+local espObjects = {} -- [player] = { box, name, hpBg, hpFill, bones = {} }
 
-row(espPage, 0, "Box ESP")
-make("TextLabel", {
-	Size = UDim2.new(1, 0, 0, 18),
-	Position = UDim2.new(0, 0, 0, 36),
-	BackgroundTransparency = 1,
-	Font = Enum.Font.Gotham,
-	TextSize = 12,
-	TextColor3 = COL.sub,
-	TextXAlignment = Enum.TextXAlignment.Left,
-	Text = drawingOk and "Draws a box + name over players" or "Unavailable: no Drawing API",
-}, espPage)
+local ESP_COLOR = Color3.fromRGB(230, 68, 68)
+
+-- skeleton joint pairs per rig; parts are resolved by name each frame
+local SKELETON_R6 = {
+	{ "Head", "Torso" },
+	{ "Torso", "Left Arm" },
+	{ "Torso", "Right Arm" },
+	{ "Torso", "Left Leg" },
+	{ "Torso", "Right Leg" },
+}
+local SKELETON_R15 = {
+	{ "Head", "UpperTorso" },
+	{ "UpperTorso", "LowerTorso" },
+	{ "UpperTorso", "LeftUpperArm" },
+	{ "LeftUpperArm", "LeftLowerArm" },
+	{ "LeftLowerArm", "LeftHand" },
+	{ "UpperTorso", "RightUpperArm" },
+	{ "RightUpperArm", "RightLowerArm" },
+	{ "RightLowerArm", "RightHand" },
+	{ "LowerTorso", "LeftUpperLeg" },
+	{ "LeftUpperLeg", "LeftLowerLeg" },
+	{ "LeftLowerLeg", "LeftFoot" },
+	{ "LowerTorso", "RightUpperLeg" },
+	{ "RightUpperLeg", "RightLowerLeg" },
+	{ "RightLowerLeg", "RightFoot" },
+}
+local SKELETON_POOL = 16 -- enough line drawings to cover an R15 rig
+
+row(espPage, 0, "Enabled")
+row(espPage, 24, "Distance")
+row(espPage, 48, "Health")
+row(espPage, 72, "Skeleton")
+row(espPage, 96, "Box")
 
 local function newDrawing(class, props)
 	local d = Drawing.new(class)
@@ -522,18 +548,33 @@ end
 local function espHide(o)
 	o.box.Visible = false
 	o.name.Visible = false
+	o.hpBg.Visible = false
+	o.hpFill.Visible = false
+	for _, ln in ipairs(o.bones) do
+		ln.Visible = false
+	end
 end
 
 local function espAdd(plr)
 	if not drawingOk or plr == player or espObjects[plr] then
 		return
 	end
+	local bones = {}
+	for i = 1, SKELETON_POOL do
+		bones[i] = newDrawing("Line", { Thickness = 1, Color = Color3.new(1, 1, 1), Visible = false })
+	end
 	espObjects[plr] = {
-		box = newDrawing("Square", { Thickness = 1.5, Color = COL.on, Filled = false, Visible = false }),
+		box = newDrawing("Square", { Thickness = 1.5, Color = ESP_COLOR, Filled = false, Visible = false }),
 		name = newDrawing(
 			"Text",
 			{ Size = 13, Center = true, Outline = true, Color = Color3.new(1, 1, 1), Visible = false }
 		),
+		hpBg = newDrawing("Square", { Thickness = 1, Color = Color3.new(0, 0, 0), Filled = true, Visible = false }),
+		hpFill = newDrawing(
+			"Square",
+			{ Thickness = 1, Color = Color3.fromRGB(70, 210, 110), Filled = true, Visible = false }
+		),
+		bones = bones,
 	}
 end
 
@@ -544,6 +585,11 @@ local function espRemove(plr)
 	end
 	o.box:Remove()
 	o.name:Remove()
+	o.hpBg:Remove()
+	o.hpFill:Remove()
+	for _, ln in ipairs(o.bones) do
+		ln:Remove()
+	end
 	espObjects[plr] = nil
 end
 
@@ -558,6 +604,27 @@ local setEspSwitch, toggleEsp = makeSwitch(espPage, 0, false, function(on)
 	if not espEnabled then
 		for _, o in pairs(espObjects) do
 			espHide(o)
+		end
+	end
+end)
+
+makeSwitch(espPage, 24, espDistance, function(on)
+	espDistance = on
+end)
+
+makeSwitch(espPage, 48, espHealth, function(on)
+	espHealth = on
+end)
+
+makeSwitch(espPage, 72, espSkeleton, function(on)
+	espSkeleton = on
+end)
+
+makeSwitch(espPage, 96, espBox, function(on)
+	espBox = on
+	if not on then
+		for _, o in pairs(espObjects) do
+			o.box.Visible = false
 		end
 	end
 end)
@@ -578,15 +645,81 @@ connect(RunService.RenderStepped, function()
 			local top, onTop = camera:WorldToViewportPoint(topPos)
 			local bot = camera:WorldToViewportPoint(botPos)
 			if onTop then
+				local col = ESP_COLOR
 				local height = math.abs(bot.Y - top.Y)
 				local width = height * 0.5
-				o.box.Size = Vector2.new(width, height)
-				o.box.Position = Vector2.new(top.X - width / 2, top.Y)
-				o.box.Visible = true
-				local dist = (camera.CFrame.Position - rootPart.Position).Magnitude
-				o.name.Text = string.format("%s [%dm]", plr.Name, math.floor(dist))
+				local boxX = top.X - width / 2
+				if espBox then
+					o.box.Color = col
+					o.box.Size = Vector2.new(width, height)
+					o.box.Position = Vector2.new(boxX, top.Y)
+					o.box.Visible = true
+				else
+					o.box.Visible = false
+				end
+
+				-- name, plus optional distance / health readouts
+				local label = plr.Name
+				if espDistance then
+					local dist = (camera.CFrame.Position - rootPart.Position).Magnitude
+					label = string.format("%s [%dm]", label, math.floor(dist))
+				end
+				if espHealth then
+					label = string.format("%s (%d)", label, math.floor(hum.Health))
+				end
+				o.name.Text = label
+				o.name.Color = col
 				o.name.Position = Vector2.new(top.X, top.Y - 16)
 				o.name.Visible = true
+
+				-- health bar running down the left edge of the box
+				if espHealth then
+					local pct = math.clamp(hum.Health / math.max(hum.MaxHealth, 1), 0, 1)
+					local barW = 3
+					local barX = boxX - barW - 3
+					o.hpBg.Size = Vector2.new(barW, height)
+					o.hpBg.Position = Vector2.new(barX, top.Y)
+					o.hpBg.Visible = true
+					local fillH = height * pct
+					o.hpFill.Size = Vector2.new(barW, fillH)
+					o.hpFill.Position = Vector2.new(barX, top.Y + (height - fillH))
+					o.hpFill.Color = Color3.fromRGB(math.floor(255 * (1 - pct)), math.floor(210 * pct), 90)
+					o.hpFill.Visible = true
+				else
+					o.hpBg.Visible = false
+					o.hpFill.Visible = false
+				end
+
+				-- skeleton: connect resolvable joint pairs for the character's rig
+				if espSkeleton then
+					local rig = hum.RigType == Enum.HumanoidRigType.R15 and SKELETON_R15 or SKELETON_R6
+					local used = 0
+					for _, pair in ipairs(rig) do
+						local a = ch:FindFirstChild(pair[1])
+						local b = ch:FindFirstChild(pair[2])
+						if a and b then
+							local pa, va = camera:WorldToViewportPoint(a.Position)
+							local pb, vb = camera:WorldToViewportPoint(b.Position)
+							if va and vb then
+								used += 1
+								local ln = o.bones[used]
+								if ln then
+									ln.Color = col
+									ln.From = Vector2.new(pa.X, pa.Y)
+									ln.To = Vector2.new(pb.X, pb.Y)
+									ln.Visible = true
+								end
+							end
+						end
+					end
+					for j = used + 1, #o.bones do
+						o.bones[j].Visible = false
+					end
+				else
+					for _, ln in ipairs(o.bones) do
+						ln.Visible = false
+					end
+				end
 			else
 				espHide(o)
 			end
@@ -595,6 +728,7 @@ connect(RunService.RenderStepped, function()
 		end
 	end
 end)
+
 
 -- ========== HITBOX TAB ==========
 local hitboxEnabled = false
@@ -1426,6 +1560,15 @@ connect(player.Chatted, function(msg)
 		end
 
 		cmd = cmd:lower()
+
+		pcall(function()
+			game:GetService("StarterGui"):SetCore("SendNotification", {
+				Title = "Command",
+				Text = "Executed " .. cmd,
+				Duration = 2,
+			})
+		end)
+	end)
 
 	-- =========================
 	-- COMMAND BAR
