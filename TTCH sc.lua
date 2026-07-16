@@ -1212,12 +1212,10 @@ local toolDefs = {
 	},
 
 	[3] = {
-		name = "Treehouse Fab",
+		name = "Noclip tool",
 		run = function()
 			loadstring(
-				game:HttpGet(
-					"https://raw.githubusercontent.com/mckenziii/treehouse/refs/heads/main/treehouse%20sc"
-				)
+				game:HttpGet("https://raw.githubusercontent.com/mckenziii/The-Twink-Community-Hub/refs/heads/main/Tools/noclip.lua")
 			)()
 		end,
 	},
@@ -1236,11 +1234,7 @@ local toolDefs = {
 	[5] = {
 		name = "Stage Fab",
 		run = function()
-			loadstring(
-				game:HttpGet(
-					"https://raw.githubusercontent.com/mckenziii/stage/refs/heads/main/stage%20sc"
-				)
-			)()
+			loadstring(game:HttpGet("https://raw.githubusercontent.com/mckenziii/stage/refs/heads/main/stage%20sc"))()
 		end,
 	},
 
@@ -1259,9 +1253,7 @@ local toolDefs = {
 		name = "Stripclub Fab",
 		run = function()
 			loadstring(
-				game:HttpGet(
-					"https://raw.githubusercontent.com/mckenziii/stripclub/refs/heads/main/stripclub%20sc"
-				)
+				game:HttpGet("https://raw.githubusercontent.com/mckenziii/stripclub/refs/heads/main/stripclub%20sc")
 			)()
 		end,
 	},
@@ -1281,9 +1273,7 @@ local toolDefs = {
 		name = "Racetrack Fab",
 		run = function()
 			loadstring(
-				game:HttpGet(
-					"https://raw.githubusercontent.com/mckenziii/racetrack/refs/heads/main/racetrack%20sc"
-				)
+				game:HttpGet("https://raw.githubusercontent.com/mckenziii/racetrack/refs/heads/main/racetrack%20sc")
 			)()
 		end,
 	},
@@ -1424,6 +1414,27 @@ connect(player.Chatted, function(msg)
 	end
 
 	cmd = cmd:lower()
+
+	connect(player.Chatted, function(msg)
+		if msg:sub(1, 1) ~= "!" then
+			return
+		end
+
+		local cmd, arg = msg:sub(2):match("^(%S+)%s*(.-)$")
+		if not cmd then
+			return
+		end
+
+		cmd = cmd:lower()
+
+		pcall(function()
+			game:GetService("StarterGui"):SetCore("SendNotification", {
+				Title = "Command",
+				Text = "Executed " .. cmd,
+				Duration = 2,
+			})
+		end)
+	end)
 
 	-- =========================
 	-- COMMAND BAR
@@ -2458,13 +2469,13 @@ _G.ScriptHubCleanup = function()
 	local FpsPingGui = game:GetService("Players").LocalPlayer.PlayerGui:FindFirstChild("FpsPingGui")
 
 	if FpsPingGui then
-	    FpsPingGui:Destroy()
+		FpsPingGui:Destroy()
 	end
 	_G.ScriptHubCleanup = nil
 end
 
 -- load notification = proof this version actually ran
-pcall(function() 
+pcall(function()
 	game:GetService("StarterGui"):SetCore("SendNotification", {
 		Title = "Twink Community Hub",
 		Text = VERSION .. " loaded | K hide | C speed | G gravity",
@@ -2481,423 +2492,237 @@ local UIS = game:GetService("UserInputService")
 local player = Players.LocalPlayer
 
 if _G.FpsPingCleanup then
-    pcall(_G.FpsPingCleanup)
+	pcall(_G.FpsPingCleanup)
 end
 
 local conns = {}
 
 local function connect(sig, fn)
-    local c = sig:Connect(fn)
-    conns[#conns + 1] = c
-    return c
+	local c = sig:Connect(fn)
+	conns[#conns + 1] = c
+	return c
 end
-
 
 local COL = {
-    bg = Color3.fromRGB(24,25,31),
-    stroke = Color3.fromRGB(58,62,75),
+	bg = Color3.fromRGB(24, 25, 31),
+	stroke = Color3.fromRGB(58, 62, 75),
 
-    green = Color3.fromRGB(80,220,130),
-    yellow = Color3.fromRGB(240,200,80),
-    red = Color3.fromRGB(230,68,68),
+	green = Color3.fromRGB(80, 220, 130),
+	yellow = Color3.fromRGB(240, 200, 80),
+	red = Color3.fromRGB(230, 68, 68),
 
-    text = Color3.fromRGB(235,238,245),
-    sub = Color3.fromRGB(142,148,165),
+	text = Color3.fromRGB(235, 238, 245),
+	sub = Color3.fromRGB(142, 148, 165),
 }
 
-
 local function make(class, props, parent)
-    local o = Instance.new(class)
+	local o = Instance.new(class)
 
-    for k,v in pairs(props) do
-        o[k] = v
-    end
+	for k, v in pairs(props) do
+		o[k] = v
+	end
 
-    o.Parent = parent
-    return o
+	o.Parent = parent
+	return o
 end
-
 
 local function round(obj, size)
-    make("UICorner", {
-        CornerRadius = UDim.new(0,size)
-    }, obj)
+	make("UICorner", {
+		CornerRadius = UDim.new(0, size),
+	}, obj)
 end
-
-
 
 -- GUI
 
 local old = player.PlayerGui:FindFirstChild("FpsPingGui")
 
 if old then
-    old:Destroy()
+	old:Destroy()
 end
 
+local gui = make("ScreenGui", {
+	Name = "FpsPingGui",
+	ResetOnSpawn = false,
+}, player.PlayerGui)
 
-local gui = make(
-    "ScreenGui",
-    {
-        Name = "FpsPingGui",
-        ResetOnSpawn = false
-    },
-    player.PlayerGui
-)
+local bar = make("Frame", {
+	AnchorPoint = Vector2.new(0, 1),
 
+	Position = UDim2.new(0, 12, 1, -12),
 
+	Size = UDim2.new(0, 0, 0, 30),
 
-local bar = make(
-    "Frame",
-    {
-        AnchorPoint = Vector2.new(0,1),
+	AutomaticSize = Enum.AutomaticSize.X,
 
-        Position = UDim2.new(
-            0,
-            12,
-            1,
-            -12
-        ),
+	BackgroundColor3 = COL.bg,
 
-        Size = UDim2.new(0,0,0,30),
+	BorderSizePixel = 0,
 
-        AutomaticSize = Enum.AutomaticSize.X,
+	Active = true,
+}, gui)
 
-        BackgroundColor3 = COL.bg,
+round(bar, 8)
 
-        BorderSizePixel = 0,
+make("UIStroke", {
+	Color = COL.stroke,
+	Thickness = 1,
+}, bar)
 
-        Active = true
-    },
-    gui
-)
+make("UIPadding", {
+	PaddingLeft = UDim.new(0, 12),
+	PaddingRight = UDim.new(0, 12),
+}, bar)
 
-round(bar,8)
+make("UIListLayout", {
+	FillDirection = Enum.FillDirection.Horizontal,
+	VerticalAlignment = Enum.VerticalAlignment.Center,
+	Padding = UDim.new(0, 6),
+	SortOrder = Enum.SortOrder.LayoutOrder,
+}, bar)
 
+local function label(text, color, font, order)
+	return make("TextLabel", {
+		Size = UDim2.new(0, 0, 1, 0),
 
-make(
-    "UIStroke",
-    {
-        Color = COL.stroke,
-        Thickness = 1
-    },
-    bar
-)
+		AutomaticSize = Enum.AutomaticSize.X,
 
+		BackgroundTransparency = 1,
 
-make(
-    "UIPadding",
-    {
-        PaddingLeft = UDim.new(0,12),
-        PaddingRight = UDim.new(0,12)
-    },
-    bar
-)
+		Font = font,
 
+		TextSize = 14,
 
-make(
-    "UIListLayout",
-    {
-        FillDirection = Enum.FillDirection.Horizontal,
-        VerticalAlignment = Enum.VerticalAlignment.Center,
-        Padding = UDim.new(0,6),
-        SortOrder = Enum.SortOrder.LayoutOrder
-    },
-    bar
-)
+		TextColor3 = color,
 
+		Text = text,
 
-
-local function label(text,color,font,order)
-
-    return make(
-        "TextLabel",
-        {
-            Size = UDim2.new(0,0,1,0),
-
-            AutomaticSize = Enum.AutomaticSize.X,
-
-            BackgroundTransparency = 1,
-
-            Font = font,
-
-            TextSize = 14,
-
-            TextColor3 = color,
-
-            Text = text,
-
-            LayoutOrder = order
-        },
-        bar
-    )
-
+		LayoutOrder = order,
+	}, bar)
 end
 
+label("FPS", COL.red, Enum.Font.GothamBold, 1)
 
+local fpsValue = label("--", COL.red, Enum.Font.GothamSemibold, 2)
 
-label(
-    "FPS",
-    COL.red,
-    Enum.Font.GothamBold,
-    1
-)
+make("Frame", {
+	Size = UDim2.new(0, 1, 0, 16),
 
+	BackgroundColor3 = COL.stroke,
 
-local fpsValue = label(
-    "--",
-    COL.red,
-    Enum.Font.GothamSemibold,
-    2
-)
+	BorderSizePixel = 0,
 
+	LayoutOrder = 3,
+}, bar)
 
+label("PING", COL.red, Enum.Font.GothamBold, 4)
 
-make(
-    "Frame",
-    {
-        Size = UDim2.new(0,1,0,16),
-
-        BackgroundColor3 = COL.stroke,
-
-        BorderSizePixel = 0,
-
-        LayoutOrder = 3
-    },
-    bar
-)
-
-
-
-label(
-    "PING",
-    COL.red,
-    Enum.Font.GothamBold,
-    4
-)
-
-
-local pingValue = label(
-    "--",
-    COL.red,
-    Enum.Font.GothamSemibold,
-    5
-)
-
-
+local pingValue = label("--", COL.red, Enum.Font.GothamSemibold, 5)
 
 local function fpsColor(fps)
-
-    if fps >= 50 then
-        return COL.green
-
-    elseif fps >= 30 then
-        return COL.yellow
-
-    else
-        return COL.red
-    end
-
+	if fps >= 50 then
+		return COL.green
+	elseif fps >= 30 then
+		return COL.yellow
+	else
+		return COL.red
+	end
 end
-
-
 
 local function pingColor(ms)
-
-    if ms <= 50 then
-        return COL.green
-
-    elseif ms <= 100 then
-        return COL.yellow
-
-    else
-        return COL.red
-    end
-
+	if ms <= 50 then
+		return COL.green
+	elseif ms <= 100 then
+		return COL.yellow
+	else
+		return COL.red
+	end
 end
-
-
-
-
 
 -- FPS
 
 local frames = 0
 local elapsed = 0
 
+connect(RunService.RenderStepped, function(dt)
+	frames = frames + 1
+	elapsed = elapsed + dt
 
-connect(
-    RunService.RenderStepped,
-    function(dt)
+	if elapsed >= 0.5 then
+		local fps = math.floor(frames / elapsed + 0.5)
 
-        frames = frames + 1
-        elapsed = elapsed + dt
+		fpsValue.Text = tostring(fps)
 
+		fpsValue.TextColor3 = fpsColor(fps)
 
-        if elapsed >= 0.5 then
-
-            local fps = math.floor(
-                frames / elapsed + 0.5
-            )
-
-
-            fpsValue.Text = tostring(fps)
-
-            fpsValue.TextColor3 =
-                fpsColor(fps)
-
-
-            frames = 0
-            elapsed = 0
-
-        end
-
-    end
-)
-
-
-
-
+		frames = 0
+		elapsed = 0
+	end
+end)
 
 -- PING
 
 local pingTimer = 0
 
-
 local function getPing()
-
-    return math.floor(
-        player:GetNetworkPing() * 1000 + 0.5
-    )
-
+	return math.floor(player:GetNetworkPing() * 1000 + 0.5)
 end
 
+connect(RunService.Heartbeat, function(dt)
+	pingTimer = pingTimer + dt
 
+	if pingTimer >= 1 then
+		local ms = getPing()
 
-connect(
-    RunService.Heartbeat,
-    function(dt)
+		pingValue.Text = tostring(ms) .. "ms"
 
-        pingTimer = pingTimer + dt
+		pingValue.TextColor3 = pingColor(ms)
 
-
-        if pingTimer >= 1 then
-
-            local ms = getPing()
-
-
-            pingValue.Text =
-                tostring(ms).."ms"
-
-
-            pingValue.TextColor3 =
-                pingColor(ms)
-
-
-            pingTimer = 0
-
-        end
-
-    end
-)
-
-
-
-
+		pingTimer = 0
+	end
+end)
 
 -- DRAGGING
 
 do
+	local dragging = false
+	local start
+	local pos
 
-    local dragging = false
-    local start
-    local pos
+	connect(bar.InputBegan, function(i)
+		if i.UserInputType == Enum.UserInputType.MouseButton1 then
+			dragging = true
 
+			start = i.Position
 
-    connect(
-        bar.InputBegan,
-        function(i)
+			pos = bar.Position
+		end
+	end)
 
-            if i.UserInputType ==
-                Enum.UserInputType.MouseButton1 then
+	connect(UIS.InputChanged, function(i)
+		if dragging and i.UserInputType == Enum.UserInputType.MouseMovement then
+			local d = i.Position - start
 
-                dragging = true
+			bar.Position = UDim2.new(pos.X.Scale, pos.X.Offset + d.X, pos.Y.Scale, pos.Y.Offset + d.Y)
+		end
+	end)
 
-                start = i.Position
-
-                pos = bar.Position
-
-            end
-
-        end
-    )
-
-
-
-    connect(
-        UIS.InputChanged,
-        function(i)
-
-            if dragging and
-                i.UserInputType ==
-                Enum.UserInputType.MouseMovement then
-
-
-                local d =
-                    i.Position - start
-
-
-                bar.Position =
-                    UDim2.new(
-                        pos.X.Scale,
-                        pos.X.Offset + d.X,
-
-                        pos.Y.Scale,
-                        pos.Y.Offset + d.Y
-                    )
-
-            end
-
-        end
-    )
-
-
-
-    connect(
-        UIS.InputEnded,
-        function(i)
-
-            if i.UserInputType ==
-                Enum.UserInputType.MouseButton1 then
-
-                dragging = false
-
-            end
-
-        end
-    )
-
+	connect(UIS.InputEnded, function(i)
+		if i.UserInputType == Enum.UserInputType.MouseButton1 then
+			dragging = false
+		end
+	end)
 end
 
-
-
-
-
 _G.FpsPingCleanup = function()
+	for _, c in ipairs(conns) do
+		pcall(function()
+			c:Disconnect()
+		end)
+	end
 
-    for _,c in ipairs(conns) do
+	if gui then
+		gui:Destroy()
+	end
 
-        pcall(function()
-            c:Disconnect()
-        end)
-
-    end
-
-
-    if gui then
-        gui:Destroy()
-    end
-
-
-    _G.FpsPingCleanup = nil
-
+	_G.FpsPingCleanup = nil
 end

@@ -1,90 +1,47 @@
-local Players = game:GetService("Players")
-local RunService = game:GetService("RunService")
-local StarterGui = game:GetService("StarterGui")
+local P,R,S=game:GetService("Players").LocalPlayer,game:GetService("RunService"),game:GetService("StarterGui")
+local N,C
 
-local player = Players.LocalPlayer
-
-local noclip = false
-local connection
-
-local function notify(msg)
-    pcall(function()
-        StarterGui:SetCore("SendNotification", {
-            Title = "Noclip Tool",
-            Text = msg,
-            Duration = 3
-        })
-    end)
+local function T(t)
+	pcall(S.SetCore,S,"SendNotification",{Title="Noclip Tool",Text=t,Duration=3})
 end
 
-local function stopNoclip(char)
-    noclip = false
-
-    if connection then
-        connection:Disconnect()
-        connection = nil
-    end
-
-    if char then
-        for _,v in ipairs(char:GetDescendants()) do
-            if v:IsA("BasePart") then
-                v.CanCollide = true
-            end
-        end
-    end
-
-    notify("Noclip Disabled")
+local function G()
+	local B=P:WaitForChild("Backpack")
+	if B:FindFirstChild("Noclip Tool") then B["Noclip Tool"]:Destroy() end
+	local X=Instance.new("Tool")
+	X.Name="Noclip Tool"
+	X.RequiresHandle=false
+	X.CanBeDropped=false
+	X.Parent=B
+	X.Activated:Connect(function()
+		local H=P.Character
+		if not H then return end
+		N=not N
+		if C then C:Disconnect() end
+		if N then
+			C=R.Stepped:Connect(function()
+				for _,v in ipairs(H:GetDescendants()) do
+					if v:IsA("BasePart") then
+						v.CanCollide=false
+					end
+				end
+			end)
+			T("Noclip Enabled")
+		else
+			for _,v in ipairs(H:GetDescendants()) do
+				if v:IsA("BasePart") then
+					v.CanCollide=true
+				end
+			end
+			T("Noclip Disabled")
+		end
+	end)
 end
 
-local function startNoclip(char)
-    noclip = true
-
-    connection = RunService.Stepped:Connect(function()
-        if not char then return end
-
-        for _,v in ipairs(char:GetDescendants()) do
-            if v:IsA("BasePart") then
-                v.CanCollide = false
-            end
-        end
-    end)
-
-    notify("Noclip Enabled")
-end
-
-local function toggle()
-    local char = player.Character
-    if not char then return end
-
-    if noclip then
-        stopNoclip(char)
-    else
-        startNoclip(char)
-    end
-end
-
-local function giveTool(char)
-    local backpack = player:WaitForChild("Backpack")
-
-    if backpack:FindFirstChild("Noclip Tool") then
-        backpack["Noclip Tool"]:Destroy()
-    end
-
-    local tool = Instance.new("Tool")
-    tool.Name = "Noclip Tool"
-    tool.RequiresHandle = false
-    tool.CanBeDropped = false
-    tool.Parent = backpack
-
-    tool.Activated:Connect(toggle)
-end
-
-if player.Character then
-    giveTool(player.Character)
-end
-
-player.CharacterAdded:Connect(function(char)
-    stopNoclip()
-    task.wait(0.2)
-    giveTool(char)
+if P.Character then G() end
+P.CharacterAdded:Connect(function()
+	N=false
+	if C then C:Disconnect() end
+	task.wait(.2)
+	G()
 end)
