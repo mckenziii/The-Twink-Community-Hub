@@ -432,7 +432,12 @@ if normalGravity == 0 then
 	normalGravity = 196.2
 end
 
-row(gravPage, 0, "Zero gravity [G]")
+-- the switch applies whatever is in the box; flipping it off restores normalGravity
+local customGravity = normalGravity
+local gravEnabled = false
+local applyingGravity = false -- guard so our own writes aren't mistaken for the game's
+
+row(gravPage, 0, "Custom gravity [G]")
 
 row(gravPage, 36, "Gravity (0-500)")
 local gravBox = make("TextBox", {
@@ -462,34 +467,38 @@ local gravLbl = make("TextLabel", {
 local function updateGravUI()
 	gravLbl.Text = ("Current: %.1f"):format(workspace.Gravity)
 	if not gravBox:IsFocused() then
-		gravBox.Text = ("%g"):format(workspace.Gravity)
+		gravBox.Text = ("%g"):format(customGravity)
 	end
 end
 
-local setGravSwitch, toggleGrav = makeSwitch(gravPage, 0, workspace.Gravity == 0, function(on)
-	if on then
-		if workspace.Gravity ~= 0 then
-			normalGravity = workspace.Gravity
-		end
-		workspace.Gravity = 0
-	else
-		workspace.Gravity = normalGravity
-	end
+local function applyGravity(value)
+	applyingGravity = true
+	workspace.Gravity = value
+	applyingGravity = false
+end
+
+local setGravSwitch, toggleGrav = makeSwitch(gravPage, 0, false, function(on)
+	gravEnabled = on
+	applyGravity(on and customGravity or normalGravity)
+	updateGravUI()
 end)
 
 connect(gravBox.FocusLost, function()
 	local n = tonumber(gravBox.Text)
 	if n then
-		workspace.Gravity = math.clamp(n, 0, 500)
+		customGravity = math.clamp(n, 0, 500)
+		if gravEnabled then
+			applyGravity(customGravity) -- live-update while the switch is on
+		end
 	end
 	updateGravUI()
 end)
 
 connect(workspace:GetPropertyChangedSignal("Gravity"), function()
-	if workspace.Gravity ~= 0 then
+	-- if the game changes gravity while we're off, that becomes the new "normal"
+	if not applyingGravity and not gravEnabled then
 		normalGravity = workspace.Gravity
 	end
-	setGravSwitch(workspace.Gravity == 0)
 	updateGravUI()
 end)
 updateGravUI()
@@ -497,7 +506,7 @@ updateGravUI()
 -- ========== ESP TAB ==========
 local espEnabled = false
 local espBox = true
-local espDistance = true
+local espDistance = false
 local espHealth = false
 local espSkeleton = false
 local drawingOk = (Drawing ~= nil) -- Drawing is an executor feature; guard so the hub still loads without it
@@ -1469,7 +1478,9 @@ do
 	connect(UIS.InputChanged, function(i)
 		if drag and i.UserInputType == Enum.UserInputType.MouseMovement then
 			local d = i.Position - start
-			main.Position = UDim2.new(0, pos.X.Offset + d.X, 0, pos.Y.Offset + d.Y)
+			-- keep the original scale; rebuilding it as 0 snapped the panel to the top
+			main.Position =
+				UDim2.new(pos.X.Scale, pos.X.Offset + d.X, pos.Y.Scale, pos.Y.Offset + d.Y)
 		end
 	end)
 	connect(UIS.InputEnded, function(i)
