@@ -50,25 +50,6 @@ local GRAV_KEY = Enum.KeyCode.G
 local waitingForToggleKey = false
 local keyChangeCooldown = false
 
-local function runScript(url)
-	local success, src = pcall(function()
-		return game:HttpGet(url)
-	end)
-
-	if not success then
-		warn("Failed to fetch:", url)
-		return
-	end
-
-	local fn, err = loadstring(src)
-
-	if fn then
-		pcall(fn)
-	else
-		warn("Load error:", err)
-	end
-end
-
 local COL = {
 	bg = Color3.fromRGB(24, 25, 31),
 	element = Color3.fromRGB(41, 44, 54),
@@ -80,10 +61,25 @@ local COL = {
 	off = Color3.fromRGB(84, 88, 102),
 }
 
+-- Theming. Any Color3 prop whose value came from COL is remembered here, so changing a
+-- role later can restyle every existing instance without touching each call site.
+-- themeRefreshers holds redraw callbacks for things whose colour depends on live state
+-- (switch on/off, selected tab) and so can't be restored from creation values alone.
+local themedRefs = {}
+local themeRefreshers = {}
+
 local function make(class, props, parent)
 	local o = Instance.new(class)
 	for k, v in pairs(props) do
 		o[k] = v
+		if typeof(v) == "Color3" then
+			for role, c in pairs(COL) do
+				if c == v then
+					themedRefs[#themedRefs + 1] = { obj = o, prop = k, role = role }
+					break
+				end
+			end
+		end
 	end
 	o.Parent = parent
 	return o
@@ -107,8 +103,8 @@ local function click()
 end
 
 local main = make("Frame", {
-	Size = UDim2.new(0, 380, 0, 210),
-	Position = UDim2.new(0, 16, 0.5, -105),
+	Size = UDim2.new(0, 380, 0, 244), -- 244 = 210 + a 34px bottom bar for the cog/version/unload
+	Position = UDim2.new(0, 16, 0.5, -122),
 	BackgroundColor3 = COL.bg,
 	BorderSizePixel = 0,
 	Active = true,
@@ -221,28 +217,47 @@ make("Frame", {
 	BorderSizePixel = 0,
 }, main)
 
--- tabs
+-- tabs live in a horizontal scroll strip, so adding tabs never shrinks the existing ones
 local pages, tabs = {}, {}
 local selectTab
+local currentTab
 
-local TAB_COUNT = 7
-local function makeTab(name, order)
-	local m, gap = 8, 5
-	local w = (380 - m * 2 - gap * (TAB_COUNT - 1)) / TAB_COUNT
+local TAB_WIDTH = 62
+
+local tabStrip = make("ScrollingFrame", {
+	Size = UDim2.new(1, -16, 0, 30),
+	Position = UDim2.new(0, 8, 0, 44),
+	BackgroundTransparency = 1,
+	BorderSizePixel = 0,
+	ScrollBarThickness = 3,
+	ScrollBarImageColor3 = COL.sub,
+	ScrollingDirection = Enum.ScrollingDirection.X,
+	CanvasSize = UDim2.new(0, 0, 0, 0),
+}, main)
+
+local tabLayout = make("UIListLayout", {
+	FillDirection = Enum.FillDirection.Horizontal,
+	Padding = UDim.new(0, 5),
+	SortOrder = Enum.SortOrder.LayoutOrder,
+}, tabStrip)
+
+local tabOrder = 0
+local function makeTab(name)
+	tabOrder += 1
 	local btn = make("TextButton", {
-		Size = UDim2.new(0, w, 0, 26),
-		Position = UDim2.new(0, m + (order - 1) * (w + gap), 0, 44),
+		Size = UDim2.new(0, TAB_WIDTH, 0, 26),
 		BackgroundColor3 = COL.element,
 		Font = Enum.Font.GothamMedium,
-		TextSize = 10,
+		TextSize = 11,
 		TextColor3 = COL.sub,
 		Text = name,
 		AutoButtonColor = false,
 		BorderSizePixel = 0,
-	}, main)
+		LayoutOrder = tabOrder,
+	}, tabStrip)
 	round(btn, 7)
 	local page = make("Frame", {
-		Size = UDim2.new(1, -24, 1, -88),
+		Size = UDim2.new(1, -24, 1, -122), -- same 122px page height as before, now with a bottom bar below
 		Position = UDim2.new(0, 12, 0, 80),
 		BackgroundTransparency = 1,
 		Visible = false,
@@ -255,15 +270,33 @@ local function makeTab(name, order)
 	return page
 end
 
-local speedPage = makeTab("Speed", 1)
-local gravPage = makeTab("Gravity", 2)
-local espPage = makeTab("ESP", 3)
-local hitboxPage = makeTab("Hitbox", 4)
-local playerPage = makeTab("Player", 5)
-local flyPage = makeTab("Fly", 6)
-local toolsPage = makeTab("Tools", 7)
+local speedPage = makeTab("Speed")
+local gravPage = makeTab("Gravity")
+local espPage = makeTab("ESP")
+local hitboxPage = makeTab("Hitbox")
+local playerPage = makeTab("Player")
+local flyPage = makeTab("Fly")
+local movePage = makeTab("Movement")
+local toolsPage = makeTab("Tools")
+
+-- keep the strip's canvas as wide as the tab row
+local function sizeTabCanvas()
+	tabStrip.CanvasSize = UDim2.new(0, tabLayout.AbsoluteContentSize.X, 0, 0)
+end
+connect(tabLayout:GetPropertyChangedSignal("AbsoluteContentSize"), sizeTabCanvas)
+sizeTabCanvas()
+
+-- the wheel only drives CanvasPosition.Y by default, so map it sideways here
+connect(tabStrip.InputChanged, function(i)
+	if i.UserInputType == Enum.UserInputType.MouseWheel then
+		local maxX = math.max(tabStrip.CanvasSize.X.Offset - tabStrip.AbsoluteSize.X, 0)
+		local x = math.clamp(tabStrip.CanvasPosition.X - i.Position.Z * 40, 0, maxX)
+		tabStrip.CanvasPosition = Vector2.new(x, 0)
+	end
+end)
 
 function selectTab(name)
+	currentTab = name
 	for n, page in pairs(pages) do
 		local active = n == name
 		page.Visible = active
@@ -310,6 +343,7 @@ local function makeSwitch(parent, y, initial, onChanged)
 		tween(btn, { BackgroundColor3 = state and COL.on or COL.off })
 		tween(knob, { Position = state and UDim2.new(1, -19, 0.5, -8) or UDim2.new(0, 3, 0.5, -8) })
 	end
+	themeRefreshers[#themeRefreshers + 1] = render -- re-assert on/off colour after a theme change
 	local function toggle()
 		click()
 		state = not state
@@ -329,9 +363,9 @@ end
 -- ========== SPEED TAB ==========
 local speedEnabled = false
 row(speedPage, 0, "CFrame movement [C]")
-local setSpeedSwitch, toggleSpeed = makeSwitch(speedPage, 0, false, function(on)
+local toggleSpeed = select(2, makeSwitch(speedPage, 0, false, function(on)
 	speedEnabled = on
-end)
+end))
 
 row(speedPage, 36, "Speed (0-99999)")
 local speedBox = make("TextBox", {
@@ -477,11 +511,11 @@ local function applyGravity(value)
 	applyingGravity = false
 end
 
-local setGravSwitch, toggleGrav = makeSwitch(gravPage, 0, false, function(on)
+local toggleGrav = select(2, makeSwitch(gravPage, 0, false, function(on)
 	gravEnabled = on
 	applyGravity(on and customGravity or normalGravity)
 	updateGravUI()
-end)
+end))
 
 connect(gravBox.FocusLost, function()
 	local n = tonumber(gravBox.Text)
@@ -608,7 +642,7 @@ end
 connect(Players.PlayerAdded, espAdd)
 connect(Players.PlayerRemoving, espRemove)
 
-local setEspSwitch, toggleEsp = makeSwitch(espPage, 0, false, function(on)
+makeSwitch(espPage, 0, false, function(on)
 	espEnabled = on and drawingOk
 	if not espEnabled then
 		for _, o in pairs(espObjects) do
@@ -617,19 +651,22 @@ local setEspSwitch, toggleEsp = makeSwitch(espPage, 0, false, function(on)
 	end
 end)
 
-makeSwitch(espPage, 24, espDistance, function(on)
+-- setters kept so a loaded config can sync the switch visuals without firing callbacks
+local espSetters = {}
+
+espSetters.distance = makeSwitch(espPage, 24, espDistance, function(on)
 	espDistance = on
 end)
 
-makeSwitch(espPage, 48, espHealth, function(on)
+espSetters.health = makeSwitch(espPage, 48, espHealth, function(on)
 	espHealth = on
 end)
 
-makeSwitch(espPage, 72, espSkeleton, function(on)
+espSetters.skeleton = makeSwitch(espPage, 72, espSkeleton, function(on)
 	espSkeleton = on
 end)
 
-makeSwitch(espPage, 96, espBox, function(on)
+espSetters.box = makeSwitch(espPage, 96, espBox, function(on)
 	espBox = on
 	if not on then
 		for _, o in pairs(espObjects) do
@@ -773,7 +810,7 @@ local function hbRestoreAll()
 end
 
 row(hitboxPage, 0, "Hitbox extender")
-local setHbSwitch, toggleHb = makeSwitch(hitboxPage, 0, false, function(on)
+makeSwitch(hitboxPage, 0, false, function(on)
 	hitboxEnabled = on
 	if not on then
 		hbRestoreAll()
@@ -781,7 +818,7 @@ local setHbSwitch, toggleHb = makeSwitch(hitboxPage, 0, false, function(on)
 end)
 
 row(hitboxPage, 36, "Show box (25%)")
-local setHbVis, toggleHbVis = makeSwitch(hitboxPage, 36, true, function(on)
+makeSwitch(hitboxPage, 36, true, function(on)
 	hitboxVisible = on -- on = 25% visible, off = invisible
 end)
 
@@ -1311,6 +1348,134 @@ connect(player.CharacterAdded, function()
 	end
 end)
 
+-- ========== MOVEMENT TAB ==========
+local noclipEnabled = false
+local infJumpEnabled = false
+local walkSpeed = 16
+local jumpPower = 50
+local noclipParts = {} -- [part] = original CanCollide, so toggling off restores collisions
+
+local function noclipRestore()
+	for part, orig in pairs(noclipParts) do
+		if part and part.Parent then
+			part.CanCollide = orig
+		end
+	end
+	noclipParts = {}
+end
+
+row(movePage, 0, "Noclip")
+makeSwitch(movePage, 0, false, function(on)
+	noclipEnabled = on
+	if not on then
+		noclipRestore()
+	end
+end)
+
+row(movePage, 24, "Infinite jump")
+makeSwitch(movePage, 24, false, function(on)
+	infJumpEnabled = on
+end)
+
+connect(RunService.Stepped, function()
+	if not noclipEnabled then
+		return
+	end
+	local ch = player.Character
+	if not ch then
+		return
+	end
+	for _, part in ipairs(ch:GetDescendants()) do
+		if part:IsA("BasePart") and part.CanCollide then
+			if noclipParts[part] == nil then
+				noclipParts[part] = true
+			end
+			part.CanCollide = false
+		end
+	end
+end)
+
+connect(UIS.JumpRequest, function()
+	if not infJumpEnabled then
+		return
+	end
+	local hum = player.Character and player.Character:FindFirstChildOfClass("Humanoid")
+	if hum then
+		hum:ChangeState(Enum.HumanoidStateType.Jumping)
+	end
+end)
+
+local function applyWalkSpeed()
+	local hum = player.Character and player.Character:FindFirstChildOfClass("Humanoid")
+	if hum then
+		hum.WalkSpeed = walkSpeed
+	end
+end
+
+local function applyJumpPower()
+	local hum = player.Character and player.Character:FindFirstChildOfClass("Humanoid")
+	if hum then
+		hum.UseJumpPower = true -- JumpHeight is ignored unless this is set
+		hum.JumpPower = jumpPower
+	end
+end
+
+row(movePage, 52, "Walk speed")
+local wsBox = make("TextBox", {
+	Size = UDim2.new(0, 78, 0, 26),
+	Position = UDim2.new(1, -78, 0, 50),
+	BackgroundColor3 = COL.element,
+	Font = Enum.Font.Gotham,
+	TextSize = 13,
+	TextColor3 = COL.text,
+	Text = tostring(walkSpeed),
+	PlaceholderText = "speed",
+	PlaceholderColor3 = COL.sub,
+	ClearTextOnFocus = false,
+	BorderSizePixel = 0,
+}, movePage)
+round(wsBox, 6)
+connect(wsBox.FocusLost, function()
+	local n = tonumber(wsBox.Text)
+	if n then
+		walkSpeed = math.clamp(n, 0, 500)
+		applyWalkSpeed()
+	end
+	wsBox.Text = tostring(walkSpeed)
+end)
+
+row(movePage, 86, "Jump power")
+local jpBox = make("TextBox", {
+	Size = UDim2.new(0, 78, 0, 26),
+	Position = UDim2.new(1, -78, 0, 84),
+	BackgroundColor3 = COL.element,
+	Font = Enum.Font.Gotham,
+	TextSize = 13,
+	TextColor3 = COL.text,
+	Text = tostring(jumpPower),
+	PlaceholderText = "power",
+	PlaceholderColor3 = COL.sub,
+	ClearTextOnFocus = false,
+	BorderSizePixel = 0,
+}, movePage)
+round(jpBox, 6)
+connect(jpBox.FocusLost, function()
+	local n = tonumber(jpBox.Text)
+	if n then
+		jumpPower = math.clamp(n, 0, 500)
+		applyJumpPower()
+	end
+	jpBox.Text = tostring(jumpPower)
+end)
+
+-- respawning hands back a fresh humanoid at the game's defaults, so re-apply ours
+connect(player.CharacterAdded, function(c)
+	noclipParts = {}
+	c:WaitForChild("Humanoid")
+	applyWalkSpeed()
+	applyJumpPower()
+end)
+
 -- ========== TOOLS TAB ==========
 -- scrolling list of placeholder buttons (10 don't fit in the panel, so it scrolls)
 local toolsScroll = make("ScrollingFrame", {
@@ -1465,6 +1630,730 @@ end
 connect(toolsLayout:GetPropertyChangedSignal("AbsoluteContentSize"), sizeToolsCanvas)
 sizeToolsCanvas()
 
+-- ========== SETTINGS ==========
+-- Cog (bottom-left) opens a panel for theming + config save/load.
+local CONFIG_FILE = "twinkhub_config.json"
+-- writefile/readfile/isfile are executor features; degrade to in-memory-only without them
+local canSaveFiles = (writefile ~= nil and readfile ~= nil and isfile ~= nil)
+
+local DEFAULT_COL = {}
+for k, v in pairs(COL) do
+	DEFAULT_COL[k] = v
+end
+
+local COLOR_ROLES = {
+	{ key = "bg", label = "Background" },
+	{ key = "element", label = "Elements" },
+	{ key = "stroke", label = "Outline" },
+	{ key = "accent", label = "Accent" },
+	{ key = "on", label = "Toggle on" },
+	{ key = "off", label = "Toggle off" },
+	{ key = "text", label = "Text" },
+	{ key = "sub", label = "Sub text" },
+}
+
+local function toHex(c)
+	return string.format(
+		"%02X%02X%02X",
+		math.floor(c.R * 255 + 0.5),
+		math.floor(c.G * 255 + 0.5),
+		math.floor(c.B * 255 + 0.5)
+	)
+end
+
+local function fromHex(s)
+	s = tostring(s):gsub("#", ""):gsub("%s", "")
+	if #s ~= 6 or s:match("%X") then
+		return nil
+	end
+	local r, g, b = tonumber(s:sub(1, 2), 16), tonumber(s:sub(3, 4), 16), tonumber(s:sub(5, 6), 16)
+	if not (r and g and b) then
+		return nil
+	end
+	return Color3.fromRGB(r, g, b)
+end
+
+-- Enum.KeyCode[name] throws on a bad name, so resolve by scanning instead
+local function keyFromName(name)
+	if type(name) ~= "string" then
+		return nil
+	end
+	for _, kc in ipairs(Enum.KeyCode:GetEnumItems()) do
+		if kc.Name == name then
+			return kc
+		end
+	end
+	return nil
+end
+
+local function applyTheme()
+	for _, ref in ipairs(themedRefs) do
+		local c = COL[ref.role]
+		if c and ref.obj then
+			pcall(function()
+				ref.obj[ref.prop] = c
+			end)
+		end
+	end
+	for _, fn in ipairs(themeRefreshers) do
+		pcall(fn)
+	end
+end
+
+local function gatherConfig()
+	local colors = {}
+	for k, v in pairs(COL) do
+		colors[k] = toHex(v)
+	end
+	return {
+		colors = colors,
+		toggleKey = TOGGLE_KEY.Name,
+		flyKey = flyKey.Name,
+		cframeSpeed = _G.CFrameSpeed,
+		gravity = customGravity,
+		hitboxSize = hitboxSize,
+		flySpeed = flightSpeed,
+		walkSpeed = walkSpeed,
+		jumpPower = jumpPower,
+		esp = {
+			box = espBox,
+			distance = espDistance,
+			health = espHealth,
+			skeleton = espSkeleton,
+		},
+	}
+end
+
+local refreshSettingsUI -- defined once the swatch rows exist
+
+local function applyConfig(cfg)
+	if type(cfg) ~= "table" then
+		return
+	end
+	if type(cfg.colors) == "table" then
+		for k, hex in pairs(cfg.colors) do
+			if COL[k] ~= nil then
+				local c = fromHex(hex)
+				if c then
+					COL[k] = c
+				end
+			end
+		end
+	end
+	if tonumber(cfg.cframeSpeed) then
+		_G.CFrameSpeed = math.clamp(tonumber(cfg.cframeSpeed), 0, 99999)
+		updateSpeedUI()
+	end
+	if tonumber(cfg.gravity) then
+		customGravity = math.clamp(tonumber(cfg.gravity), 0, 500)
+		updateGravUI()
+	end
+	if tonumber(cfg.hitboxSize) then
+		hitboxSize = math.clamp(tonumber(cfg.hitboxSize), 1, 10)
+		hbBox.Text = tostring(hitboxSize)
+	end
+	if tonumber(cfg.flySpeed) then
+		flightSpeed = math.clamp(tonumber(cfg.flySpeed), 0, FLY_MAX_SPEED)
+		flyBox.Text = tostring(flightSpeed)
+	end
+	if tonumber(cfg.walkSpeed) then
+		walkSpeed = math.clamp(tonumber(cfg.walkSpeed), 0, 500)
+		wsBox.Text = tostring(walkSpeed)
+	end
+	if tonumber(cfg.jumpPower) then
+		jumpPower = math.clamp(tonumber(cfg.jumpPower), 0, 500)
+		jpBox.Text = tostring(jumpPower)
+	end
+	if type(cfg.esp) == "table" then
+		if type(cfg.esp.box) == "boolean" then
+			espBox = cfg.esp.box
+			espSetters.box(espBox)
+		end
+		if type(cfg.esp.distance) == "boolean" then
+			espDistance = cfg.esp.distance
+			espSetters.distance(espDistance)
+		end
+		if type(cfg.esp.health) == "boolean" then
+			espHealth = cfg.esp.health
+			espSetters.health(espHealth)
+		end
+		if type(cfg.esp.skeleton) == "boolean" then
+			espSkeleton = cfg.esp.skeleton
+			espSetters.skeleton(espSkeleton)
+		end
+	end
+	local tk = keyFromName(cfg.toggleKey)
+	if tk then
+		TOGGLE_KEY = tk
+		keyChip.Text = tk.Name
+	end
+	local fk = keyFromName(cfg.flyKey)
+	if fk then
+		flyKey = fk
+		flyKeyBtn.Text = fk.Name
+	end
+	applyTheme()
+	if refreshSettingsUI then
+		refreshSettingsUI()
+	end
+end
+
+local function saveConfig()
+	if not canSaveFiles then
+		return false, "no file API"
+	end
+	local ok, err = pcall(function()
+		writefile(CONFIG_FILE, HttpService:JSONEncode(gatherConfig()))
+	end)
+	return ok, err
+end
+
+local function loadConfig()
+	if not canSaveFiles or not isfile(CONFIG_FILE) then
+		return false, "no saved config"
+	end
+	local ok, cfg = pcall(function()
+		return HttpService:JSONDecode(readfile(CONFIG_FILE))
+	end)
+	if not ok or type(cfg) ~= "table" then
+		return false, "config unreadable"
+	end
+	applyConfig(cfg)
+	return true
+end
+
+-- cog button, bottom-left of the panel
+local cogBtn = make("TextButton", {
+	Size = UDim2.new(0, 26, 0, 26),
+	Position = UDim2.new(0, 8, 1, -32),
+	BackgroundColor3 = COL.element,
+	Font = Enum.Font.GothamBold,
+	TextSize = 14,
+	TextColor3 = COL.text,
+	Text = "⚙",
+	AutoButtonColor = false,
+	BorderSizePixel = 0,
+}, main)
+round(cogBtn, 6)
+
+local setFrame = make("Frame", {
+	Name = "SettingsPanel",
+	Size = UDim2.new(0, 320, 0, 340),
+	Position = UDim2.new(0.5, -160, 0.5, -170),
+	BackgroundColor3 = COL.bg,
+	BorderSizePixel = 0,
+	Visible = false,
+	Active = true,
+}, gui)
+round(setFrame, 10)
+make("UIStroke", { Color = COL.stroke, Thickness = 1 }, setFrame)
+
+local setTitle = make("TextLabel", {
+	Size = UDim2.new(1, -44, 0, 32),
+	Position = UDim2.new(0, 12, 0, 2),
+	BackgroundTransparency = 1,
+	Font = Enum.Font.GothamBold,
+	TextSize = 15,
+	TextColor3 = COL.text,
+	Text = "Settings",
+	TextXAlignment = Enum.TextXAlignment.Left,
+}, setFrame)
+setTitle.Active = true
+
+local setClose = make("TextButton", {
+	Size = UDim2.new(0, 24, 0, 24),
+	Position = UDim2.new(1, -30, 0, 6),
+	BackgroundColor3 = COL.on,
+	Font = Enum.Font.GothamBold,
+	TextSize = 13,
+	TextColor3 = Color3.new(1, 1, 1),
+	Text = "X",
+	AutoButtonColor = false,
+	BorderSizePixel = 0,
+}, setFrame)
+round(setClose, 6)
+connect(setClose.MouseButton1Click, function()
+	click()
+	setFrame.Visible = false
+end)
+
+connect(cogBtn.MouseButton1Click, function()
+	click()
+	setFrame.Visible = not setFrame.Visible
+end)
+
+local setScroll = make("ScrollingFrame", {
+	Size = UDim2.new(1, -20, 1, -110),
+	Position = UDim2.new(0, 10, 0, 38),
+	BackgroundTransparency = 1,
+	BorderSizePixel = 0,
+	ScrollBarThickness = 4,
+	ScrollBarImageColor3 = COL.sub,
+	CanvasSize = UDim2.new(0, 0, 0, 0),
+}, setFrame)
+local setLayout = make("UIListLayout", {
+	Padding = UDim.new(0, 6),
+	SortOrder = Enum.SortOrder.LayoutOrder,
+}, setScroll)
+
+local setStatus = make("TextLabel", {
+	Size = UDim2.new(1, -20, 0, 16),
+	Position = UDim2.new(0, 10, 1, -22),
+	BackgroundTransparency = 1,
+	Font = Enum.Font.Gotham,
+	TextSize = 11,
+	TextColor3 = COL.sub,
+	Text = canSaveFiles and ("Config: " .. CONFIG_FILE) or "No file API: settings won't persist",
+	TextXAlignment = Enum.TextXAlignment.Left,
+}, setFrame)
+
+local swatches = {}
+
+local function autoSave()
+	if not canSaveFiles then
+		return
+	end
+	local ok = saveConfig()
+	setStatus.Text = ok and "Saved" or "Save failed"
+end
+
+-- ---------- colour picker popup ----------
+-- Clicking a swatch opens this. Saturation/value square + hue strip, live-applied.
+-- Everything lives in one table so we don't burn top-level locals (the chunk is near
+-- Lua's 200-local cap).
+local GuiService = game:GetService("GuiService")
+local picker = { role = nil, h = 0, s = 0, v = 0, dragSV = false, dragHue = false }
+
+picker.frame = make("Frame", {
+	Name = "ColorPicker",
+	Size = UDim2.new(0, 230, 0, 216),
+	Position = UDim2.new(0.5, 180, 0.5, -108),
+	BackgroundColor3 = COL.bg,
+	BorderSizePixel = 0,
+	Visible = false,
+	Active = true,
+	ZIndex = 5,
+}, gui)
+round(picker.frame, 8)
+make("UIStroke", { Color = COL.stroke, Thickness = 1 }, picker.frame)
+
+picker.title = make("TextLabel", {
+	Size = UDim2.new(1, -24, 0, 24),
+	Position = UDim2.new(0, 12, 0, 2),
+	BackgroundTransparency = 1,
+	Font = Enum.Font.GothamBold,
+	TextSize = 13,
+	TextColor3 = COL.text,
+	Text = "Colour",
+	TextXAlignment = Enum.TextXAlignment.Left,
+	ZIndex = 5,
+}, picker.frame)
+picker.title.Active = true
+
+-- SV square: hue-coloured base, white gradient across X (saturation),
+-- black gradient down Y (value). Overlays are parented inline to save locals.
+picker.sv = make("TextButton", {
+	Size = UDim2.new(0, 200, 0, 116),
+	Position = UDim2.new(0, 15, 0, 28),
+	BackgroundColor3 = Color3.fromHSV(0, 1, 1),
+	AutoButtonColor = false,
+	Text = "",
+	BorderSizePixel = 0,
+	ClipsDescendants = true,
+	ZIndex = 5,
+}, picker.frame)
+round(picker.sv, 5)
+
+make("UIGradient", {
+	Color = ColorSequence.new(Color3.new(1, 1, 1)),
+	Transparency = NumberSequence.new({
+		NumberSequenceKeypoint.new(0, 0),
+		NumberSequenceKeypoint.new(1, 1),
+	}),
+}, make("Frame", {
+	Size = UDim2.new(1, 0, 1, 0),
+	BackgroundColor3 = Color3.new(1, 1, 1),
+	BorderSizePixel = 0,
+	ZIndex = 5,
+}, picker.sv))
+
+make("UIGradient", {
+	Color = ColorSequence.new(Color3.new(0, 0, 0)),
+	Rotation = 90,
+	Transparency = NumberSequence.new({
+		NumberSequenceKeypoint.new(0, 1),
+		NumberSequenceKeypoint.new(1, 0),
+	}),
+}, make("Frame", {
+	Size = UDim2.new(1, 0, 1, 0),
+	BackgroundColor3 = Color3.new(0, 0, 0),
+	BorderSizePixel = 0,
+	ZIndex = 6,
+}, picker.sv))
+
+picker.svDot = make("Frame", {
+	Size = UDim2.new(0, 8, 0, 8),
+	AnchorPoint = Vector2.new(0.5, 0.5),
+	Position = UDim2.new(0, 0, 0, 0),
+	BackgroundColor3 = Color3.new(1, 1, 1),
+	BorderSizePixel = 0,
+	ZIndex = 7,
+}, picker.sv)
+round(picker.svDot, 4)
+make("UIStroke", { Color = Color3.new(0, 0, 0), Thickness = 1 }, picker.svDot)
+
+picker.hue = make("TextButton", {
+	Size = UDim2.new(0, 200, 0, 14),
+	Position = UDim2.new(0, 15, 0, 152),
+	BackgroundColor3 = Color3.new(1, 1, 1),
+	AutoButtonColor = false,
+	Text = "",
+	BorderSizePixel = 0,
+	ZIndex = 5,
+}, picker.frame)
+round(picker.hue, 4)
+make("UIGradient", {
+	Color = ColorSequence.new({
+		ColorSequenceKeypoint.new(0.00, Color3.fromRGB(255, 0, 0)),
+		ColorSequenceKeypoint.new(0.17, Color3.fromRGB(255, 255, 0)),
+		ColorSequenceKeypoint.new(0.33, Color3.fromRGB(0, 255, 0)),
+		ColorSequenceKeypoint.new(0.50, Color3.fromRGB(0, 255, 255)),
+		ColorSequenceKeypoint.new(0.67, Color3.fromRGB(0, 0, 255)),
+		ColorSequenceKeypoint.new(0.83, Color3.fromRGB(255, 0, 255)),
+		ColorSequenceKeypoint.new(1.00, Color3.fromRGB(255, 0, 0)),
+	}),
+}, picker.hue)
+
+picker.hueDot = make("Frame", {
+	Size = UDim2.new(0, 3, 1, 4),
+	AnchorPoint = Vector2.new(0.5, 0.5),
+	Position = UDim2.new(0, 0, 0.5, 0),
+	BackgroundColor3 = Color3.new(1, 1, 1),
+	BorderSizePixel = 0,
+	ZIndex = 7,
+}, picker.hue)
+make("UIStroke", { Color = Color3.new(0, 0, 0), Thickness = 1 }, picker.hueDot)
+
+picker.preview = make("Frame", {
+	Size = UDim2.new(0, 34, 0, 24),
+	Position = UDim2.new(0, 15, 0, 176),
+	BackgroundColor3 = Color3.new(0, 0, 0),
+	BorderSizePixel = 0,
+	ZIndex = 5,
+}, picker.frame)
+round(picker.preview, 5)
+make("UIStroke", { Color = COL.stroke, Thickness = 1 }, picker.preview)
+
+picker.hex = make("TextBox", {
+	Size = UDim2.new(0, 100, 0, 24),
+	Position = UDim2.new(0, 55, 0, 176),
+	BackgroundColor3 = COL.element,
+	Font = Enum.Font.Gotham,
+	TextSize = 12,
+	TextColor3 = COL.text,
+	Text = "#000000",
+	PlaceholderText = "RRGGBB",
+	PlaceholderColor3 = COL.sub,
+	ClearTextOnFocus = false,
+	BorderSizePixel = 0,
+	ZIndex = 5,
+}, picker.frame)
+round(picker.hex, 5)
+
+picker.done = make("TextButton", {
+	Size = UDim2.new(0, 55, 0, 24),
+	Position = UDim2.new(0, 160, 0, 176),
+	BackgroundColor3 = COL.accent,
+	Font = Enum.Font.GothamMedium,
+	TextSize = 12,
+	TextColor3 = Color3.new(1, 1, 1),
+	Text = "Done",
+	AutoButtonColor = false,
+	BorderSizePixel = 0,
+	ZIndex = 5,
+}, picker.frame)
+round(picker.done, 5)
+
+local function pickerRender()
+	local c = Color3.fromHSV(picker.h, picker.s, picker.v)
+	picker.sv.BackgroundColor3 = Color3.fromHSV(picker.h, 1, 1)
+	picker.svDot.Position = UDim2.new(picker.s, 0, 1 - picker.v, 0)
+	picker.hueDot.Position = UDim2.new(picker.h, 0, 0.5, 0)
+	picker.preview.BackgroundColor3 = c
+	if not picker.hex:IsFocused() then
+		picker.hex.Text = "#" .. toHex(c)
+	end
+end
+
+local function pickerCommit()
+	if not picker.role then
+		return
+	end
+	COL[picker.role] = Color3.fromHSV(picker.h, picker.s, picker.v)
+	applyTheme()
+	if refreshSettingsUI then
+		refreshSettingsUI()
+	end
+end
+
+-- GetMouseLocation() is raw screen space; AbsolutePosition sits below the topbar,
+-- so subtract the GUI inset to compare them.
+local function pickerFromMouse()
+	local m = UIS:GetMouseLocation() - GuiService:GetGuiInset()
+	if picker.dragSV then
+		local a, sz = picker.sv.AbsolutePosition, picker.sv.AbsoluteSize
+		picker.s = math.clamp((m.X - a.X) / math.max(sz.X, 1), 0, 1)
+		picker.v = 1 - math.clamp((m.Y - a.Y) / math.max(sz.Y, 1), 0, 1)
+	elseif picker.dragHue then
+		local a, sz = picker.hue.AbsolutePosition, picker.hue.AbsoluteSize
+		picker.h = math.clamp((m.X - a.X) / math.max(sz.X, 1), 0, 1)
+	else
+		return
+	end
+	pickerRender()
+	pickerCommit()
+end
+
+local function openPicker(roleKey, label)
+	picker.role = roleKey
+	picker.h, picker.s, picker.v = COL[roleKey]:ToHSV()
+	picker.title.Text = label
+	-- park it just right of the settings panel; drag by the title if it lands badly
+	picker.frame.Position = UDim2.new(
+		0,
+		setFrame.AbsolutePosition.X + setFrame.AbsoluteSize.X + 8,
+		0,
+		setFrame.AbsolutePosition.Y
+	)
+	picker.frame.Visible = true
+	pickerRender()
+end
+
+connect(picker.sv.InputBegan, function(i)
+	if i.UserInputType == Enum.UserInputType.MouseButton1 then
+		picker.dragSV = true
+		pickerFromMouse()
+	end
+end)
+
+connect(picker.hue.InputBegan, function(i)
+	if i.UserInputType == Enum.UserInputType.MouseButton1 then
+		picker.dragHue = true
+		pickerFromMouse()
+	end
+end)
+
+connect(UIS.InputChanged, function(i)
+	if i.UserInputType == Enum.UserInputType.MouseMovement and (picker.dragSV or picker.dragHue) then
+		pickerFromMouse()
+	end
+end)
+
+connect(UIS.InputEnded, function(i)
+	if i.UserInputType == Enum.UserInputType.MouseButton1 and (picker.dragSV or picker.dragHue) then
+		picker.dragSV, picker.dragHue = false, false
+		autoSave() -- save once on release, not on every mouse move
+	end
+end)
+
+connect(picker.hex.FocusLost, function()
+	local c = fromHex(picker.hex.Text)
+	if c then
+		picker.h, picker.s, picker.v = c:ToHSV()
+		pickerRender()
+		pickerCommit()
+		autoSave()
+	else
+		pickerRender() -- bad hex: snap the text back
+	end
+end)
+
+connect(picker.done.MouseButton1Click, function()
+	click()
+	picker.frame.Visible = false
+end)
+
+do
+	local pDrag, pStart, pPos
+	connect(picker.title.InputBegan, function(i)
+		if i.UserInputType == Enum.UserInputType.MouseButton1 then
+			pDrag, pStart, pPos = true, i.Position, picker.frame.Position
+		end
+	end)
+	connect(UIS.InputChanged, function(i)
+		if pDrag and i.UserInputType == Enum.UserInputType.MouseMovement then
+			local d = i.Position - pStart
+			picker.frame.Position =
+				UDim2.new(pPos.X.Scale, pPos.X.Offset + d.X, pPos.Y.Scale, pPos.Y.Offset + d.Y)
+		end
+	end)
+	connect(UIS.InputEnded, function(i)
+		if i.UserInputType == Enum.UserInputType.MouseButton1 then
+			pDrag = false
+		end
+	end)
+end
+
+-- hiding the settings panel takes the picker with it (extra handlers: the originals were
+-- created before `picker` existed, so they can't see it)
+connect(setClose.MouseButton1Click, function()
+	picker.frame.Visible = false
+end)
+connect(cogBtn.MouseButton1Click, function()
+	if not setFrame.Visible then
+		picker.frame.Visible = false
+	end
+end)
+
+for i, role in ipairs(COLOR_ROLES) do
+	local line = make("Frame", {
+		Size = UDim2.new(1, -6, 0, 28),
+		BackgroundTransparency = 1,
+		LayoutOrder = i,
+	}, setScroll)
+
+	make("TextLabel", {
+		Size = UDim2.new(0.4, 0, 1, 0),
+		BackgroundTransparency = 1,
+		Font = Enum.Font.Gotham,
+		TextSize = 13,
+		TextColor3 = COL.text,
+		Text = role.label,
+		TextXAlignment = Enum.TextXAlignment.Left,
+	}, line)
+
+	-- a button, not a label: clicking it opens the picker on this role
+	local swatch = make("TextButton", {
+		Size = UDim2.new(0, 24, 0, 20),
+		Position = UDim2.new(1, -116, 0.5, -10),
+		BackgroundColor3 = COL[role.key],
+		AutoButtonColor = false,
+		Text = "",
+		BorderSizePixel = 0,
+	}, line)
+	round(swatch, 4)
+	make("UIStroke", { Color = COL.stroke, Thickness = 1 }, swatch)
+
+	connect(swatch.MouseButton1Click, function()
+		click()
+		openPicker(role.key, role.label)
+	end)
+
+	local hexBox = make("TextBox", {
+		Size = UDim2.new(0, 86, 0, 24),
+		Position = UDim2.new(1, -86, 0.5, -12),
+		BackgroundColor3 = COL.element,
+		Font = Enum.Font.Gotham,
+		TextSize = 12,
+		TextColor3 = COL.text,
+		Text = "#" .. toHex(COL[role.key]),
+		PlaceholderText = "RRGGBB",
+		PlaceholderColor3 = COL.sub,
+		ClearTextOnFocus = false,
+		BorderSizePixel = 0,
+	}, line)
+	round(hexBox, 5)
+
+	swatches[role.key] = { swatch = swatch, box = hexBox }
+
+	connect(hexBox.FocusLost, function()
+		local c = fromHex(hexBox.Text)
+		if c then
+			COL[role.key] = c
+			applyTheme()
+			autoSave()
+		else
+			setStatus.Text = "Bad hex (use RRGGBB)"
+		end
+		refreshSettingsUI()
+	end)
+end
+
+function refreshSettingsUI()
+	for _, role in ipairs(COLOR_ROLES) do
+		local s = swatches[role.key]
+		if s then
+			s.swatch.BackgroundColor3 = COL[role.key]
+			if not s.box:IsFocused() then
+				s.box.Text = "#" .. toHex(COL[role.key])
+			end
+		end
+	end
+end
+themeRefreshers[#themeRefreshers + 1] = refreshSettingsUI
+themeRefreshers[#themeRefreshers + 1] = function()
+	if currentTab then
+		selectTab(currentTab) -- re-assert the accent on the selected tab
+	end
+end
+
+local function sizeSetCanvas()
+	setScroll.CanvasSize = UDim2.new(0, 0, 0, setLayout.AbsoluteContentSize.Y + 6)
+end
+connect(setLayout:GetPropertyChangedSignal("AbsoluteContentSize"), sizeSetCanvas)
+sizeSetCanvas()
+
+-- Save / Load / Reset
+local setBtns = {
+	{ text = "Save", x = 0 },
+	{ text = "Load", x = 1 },
+	{ text = "Reset", x = 2 },
+}
+for _, def in ipairs(setBtns) do
+	local b = make("TextButton", {
+		Size = UDim2.new(0.333, -6, 0, 26),
+		Position = UDim2.new(0.333 * def.x, def.x == 0 and 10 or 4, 1, -50),
+		BackgroundColor3 = def.text == "Reset" and COL.on or COL.accent,
+		Font = Enum.Font.GothamMedium,
+		TextSize = 12,
+		TextColor3 = Color3.new(1, 1, 1),
+		Text = def.text,
+		AutoButtonColor = false,
+		BorderSizePixel = 0,
+	}, setFrame)
+	round(b, 6)
+	connect(b.MouseButton1Click, function()
+		click()
+		if def.text == "Save" then
+			local ok, err = saveConfig()
+			setStatus.Text = ok and ("Saved to " .. CONFIG_FILE) or ("Save failed: " .. tostring(err))
+		elseif def.text == "Load" then
+			local ok, err = loadConfig()
+			setStatus.Text = ok and "Config loaded" or ("Load failed: " .. tostring(err))
+		else
+			for k, v in pairs(DEFAULT_COL) do
+				COL[k] = v
+			end
+			applyTheme()
+			refreshSettingsUI()
+			autoSave()
+			setStatus.Text = "Reset to defaults"
+		end
+	end)
+end
+
+-- settings panel dragging
+do
+	local sDrag, sStart, sPos
+	connect(setTitle.InputBegan, function(i)
+		if i.UserInputType == Enum.UserInputType.MouseButton1 then
+			sDrag, sStart, sPos = true, i.Position, setFrame.Position
+		end
+	end)
+	connect(UIS.InputChanged, function(i)
+		if sDrag and i.UserInputType == Enum.UserInputType.MouseMovement then
+			local d = i.Position - sStart
+			setFrame.Position =
+				UDim2.new(sPos.X.Scale, sPos.X.Offset + d.X, sPos.Y.Scale, sPos.Y.Offset + d.Y)
+		end
+	end)
+	connect(UIS.InputEnded, function(i)
+		if i.UserInputType == Enum.UserInputType.MouseButton1 then
+			sDrag = false
+		end
+	end)
+end
+
 -- ========== DRAGGING ==========
 do
 	local drag, start, pos
@@ -1509,6 +2398,9 @@ connect(UIS.InputBegan, function(i, g)
 end)
 
 selectTab("Speed")
+
+-- restore the saved theme/settings, if any (after every tab exists so the UI can sync)
+pcall(loadConfig)
 
 -- version tag (bottom-right) so you can tell which copy is running
 make("TextLabel", {
@@ -2602,6 +3494,7 @@ _G.ScriptHubCleanup = function()
 		espRemove(plr)
 	end
 	hbRestoreAll()
+	noclipRestore()
 	stopFly()
 	-- make sure we're not left stuck in someone else's camera
 	pcall(function()
