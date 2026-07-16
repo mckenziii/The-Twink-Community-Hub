@@ -27,7 +27,7 @@ jobs:
           -d '{
             "embeds": [{
               "title": "🚀 New Commit Pushed",
-              "description": "${{ github.event.head_commit.message }}",
+              "description": "Commit message: ${{ github.event.head_commit.message }}",
               "fields": [
                 {
                   "name": "👤 Author",
@@ -42,10 +42,6 @@ jobs:
                 {
                   "name": "📝 Changed Files",
                   "value": "``` ${{ steps.files.outputs.files }} ```"
-                },
-                {
-                  "name": "🔗 Commit",
-                  "value": "[View Commit](${{ github.event.head_commit.url }})"
                 }
               ],
               "footer": {
