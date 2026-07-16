@@ -277,6 +277,10 @@ local hitboxPage = makeTab("Hitbox")
 local playerPage = makeTab("Player")
 local flyPage = makeTab("Fly")
 local movePage = makeTab("Movement")
+-- the World tab holds ALL its state (page, funcs, originals) in this one table:
+-- the chunk is near Lua's 200-local-per-function cap, so it can't spare loose locals
+local world = {}
+world.page = makeTab("World")
 local toolsPage = makeTab("Tools")
 
 -- keep the strip's canvas as wide as the tab row
@@ -361,6 +365,10 @@ local function makeSwitch(parent, y, initial, onChanged)
 end
 
 -- ========== SPEED TAB ==========
+-- Scoped; `Speed` below is the public surface (_G.CFrameSpeed stays global by design).
+local Speed
+do
+
 local speedEnabled = false
 row(speedPage, 0, "CFrame movement [C]")
 local toggleSpeed = select(2, makeSwitch(speedPage, 0, false, function(on)
@@ -460,7 +468,14 @@ connect(RunService.RenderStepped, function()
 	end
 end)
 
+Speed = { toggle = toggleSpeed, updateUI = updateSpeedUI }
+end -- Speed scope
+
 -- ========== GRAVITY TAB ==========
+-- Scoped; `Grav` below is the public surface.
+local Grav
+do
+
 local normalGravity = workspace.Gravity
 if normalGravity == 0 then
 	normalGravity = 196.2
@@ -537,7 +552,26 @@ connect(workspace:GetPropertyChangedSignal("Gravity"), function()
 end)
 updateGravUI()
 
+Grav = {
+	toggle = toggleGrav,
+	getCustom = function()
+		return customGravity
+	end,
+	setCustom = function(v)
+		customGravity = math.clamp(v, 0, 500)
+		if gravEnabled then
+			applyGravity(customGravity)
+		end
+		updateGravUI()
+	end,
+}
+end -- Gravity scope
+
 -- ========== ESP TAB ==========
+-- Scoped; the `Esp` table at the bottom is the whole public surface.
+local Esp
+do
+
 local espEnabled = false
 local espBox = true
 local espDistance = false
@@ -775,8 +809,39 @@ connect(RunService.RenderStepped, function()
 	end
 end)
 
+Esp = {
+	remove = espRemove,
+	objects = espObjects,
+	get = function()
+		return { box = espBox, distance = espDistance, health = espHealth, skeleton = espSkeleton }
+	end,
+	-- every field optional; ignore anything that isn't a real boolean
+	set = function(t)
+		if type(t.box) == "boolean" then
+			espBox = t.box
+			espSetters.box(espBox)
+		end
+		if type(t.distance) == "boolean" then
+			espDistance = t.distance
+			espSetters.distance(espDistance)
+		end
+		if type(t.health) == "boolean" then
+			espHealth = t.health
+			espSetters.health(espHealth)
+		end
+		if type(t.skeleton) == "boolean" then
+			espSkeleton = t.skeleton
+			espSetters.skeleton(espSkeleton)
+		end
+	end,
+}
+end -- ESP scope
 
 -- ========== HITBOX TAB ==========
+-- Scoped; `Hitbox` below is the public surface.
+local Hitbox
+do
+
 local hitboxEnabled = false
 local hitboxVisible = true -- true = 25% visible red box (test), false = invisible
 local hitboxSize = 5
@@ -873,7 +938,23 @@ connect(RunService.Heartbeat, function()
 	end
 end)
 
+Hitbox = {
+	restore = hbRestoreAll,
+	getSize = function()
+		return hitboxSize
+	end,
+	setSize = function(v)
+		hitboxSize = math.clamp(v, 1, 10)
+		hbBox.Text = tostring(hitboxSize)
+	end,
+}
+end -- Hitbox scope
+
 -- ========== PLAYER TAB ==========
+-- Scoped: only findPlayer escapes (the chat commands use it). Exporting a closure at the
+-- bottom means nothing in here needs renaming.
+local hubFindPlayer
+do
 
 local function findPlayer(txt)
 	txt = (txt or ""):lower()
@@ -1025,9 +1106,17 @@ connect(specBtn.MouseButton1Click, function()
 	end
 end)
 
+hubFindPlayer = findPlayer
+end -- Player scope
+
 -- ========== FLY TAB ==========
 -- (adapted from the standalone sfly build: gyro/velocity flight, bobbing hover,
 --  inertia slide, superman pitch/roll, custom fly animations)
+-- Scoped: the fattest section in the file (~27 locals). Everything the outside needs is
+-- handed out through the `Fly` table at the bottom, so nothing in here gets renamed.
+local Fly
+do
+
 local flyEnabled = false
 local flightSpeed = 50
 local FLY_MAX_SPEED = 9842774
@@ -1348,7 +1437,32 @@ connect(player.CharacterAdded, function()
 	end
 end)
 
+-- exports: setters clamp and update the UI, so callers can't desync the two
+Fly = {
+	stop = stopFly,
+	doSfly = doSfly,
+	getSpeed = function()
+		return flightSpeed
+	end,
+	setSpeed = function(v)
+		flightSpeed = math.clamp(v, 0, FLY_MAX_SPEED)
+		flyBox.Text = tostring(flightSpeed)
+	end,
+	getKey = function()
+		return flyKey
+	end,
+	setKey = function(k)
+		flyKey = k
+		flyKeyBtn.Text = k.Name
+	end,
+}
+end -- Fly scope
+
 -- ========== MOVEMENT TAB ==========
+-- Scoped; `Move` below is the public surface.
+local Move
+do
+
 local noclipEnabled = false
 local infJumpEnabled = false
 local walkSpeed = 16
@@ -1476,8 +1590,168 @@ connect(player.CharacterAdded, function(c)
 	applyJumpPower()
 end)
 
+Move = {
+	restore = noclipRestore,
+	getWalkSpeed = function()
+		return walkSpeed
+	end,
+	setWalkSpeed = function(v)
+		walkSpeed = math.clamp(v, 0, 500)
+		wsBox.Text = tostring(walkSpeed)
+		applyWalkSpeed()
+	end,
+	getJumpPower = function()
+		return jumpPower
+	end,
+	setJumpPower = function(v)
+		jumpPower = math.clamp(v, 0, 500)
+		jpBox.Text = tostring(jumpPower)
+		applyJumpPower()
+	end,
+}
+end -- Movement scope
+
+-- ========== WORLD TAB ==========
+world.lighting = game:GetService("Lighting")
+world.fullbright = false
+world.nofog = false
+world.fov = 70
+world.orig = nil -- Lighting props as we found them
+world.xrayParts = {} -- [part] = original LocalTransparencyModifier
+world.origFov = (workspace.CurrentCamera and workspace.CurrentCamera.FieldOfView) or 70
+
+-- capture once, on first use, so we always have something honest to restore to
+world.capture = function()
+	if world.orig then
+		return
+	end
+	local L = world.lighting
+	world.orig = {
+		Ambient = L.Ambient,
+		OutdoorAmbient = L.OutdoorAmbient,
+		Brightness = L.Brightness,
+		ClockTime = L.ClockTime,
+		GlobalShadows = L.GlobalShadows,
+		FogEnd = L.FogEnd,
+		FogStart = L.FogStart,
+	}
+end
+
+-- fullbright and fog share the Lighting service, so both toggles route through here
+world.applyLighting = function()
+	world.capture()
+	local L, o = world.lighting, world.orig
+	if world.fullbright then
+		L.Ambient = Color3.fromRGB(178, 178, 178)
+		L.OutdoorAmbient = Color3.fromRGB(178, 178, 178)
+		L.Brightness = 2
+		L.ClockTime = 14
+		L.GlobalShadows = false
+	else
+		L.Ambient = o.Ambient
+		L.OutdoorAmbient = o.OutdoorAmbient
+		L.Brightness = o.Brightness
+		L.ClockTime = o.ClockTime
+		L.GlobalShadows = o.GlobalShadows
+	end
+	if world.nofog then
+		L.FogEnd = 1e6
+		L.FogStart = 1e6
+	else
+		L.FogEnd = o.FogEnd
+		L.FogStart = o.FogStart
+	end
+end
+
+-- LocalTransparencyModifier is client-only, so this never replicates to the server.
+-- One-shot pass: parts streamed in later aren't affected until you re-toggle.
+world.setXray = function(on)
+	if on then
+		for _, p in ipairs(workspace:GetDescendants()) do
+			if p:IsA("BasePart") and not p.Parent:FindFirstChildOfClass("Humanoid") then
+				if world.xrayParts[p] == nil then
+					world.xrayParts[p] = p.LocalTransparencyModifier
+				end
+				p.LocalTransparencyModifier = 0.65
+			end
+		end
+	else
+		for p, orig in pairs(world.xrayParts) do
+			if p and p.Parent then
+				p.LocalTransparencyModifier = orig
+			end
+		end
+		world.xrayParts = {}
+	end
+end
+
+world.applyFov = function()
+	local cam = workspace.CurrentCamera
+	if cam then
+		cam.FieldOfView = world.fov
+	end
+end
+
+world.restore = function()
+	if world.orig then
+		world.fullbright, world.nofog = false, false
+		pcall(world.applyLighting)
+	end
+	pcall(world.setXray, false)
+	pcall(function()
+		if workspace.CurrentCamera then
+			workspace.CurrentCamera.FieldOfView = world.origFov
+		end
+	end)
+end
+
+row(world.page, 0, "Fullbright")
+makeSwitch(world.page, 0, false, function(on)
+	world.fullbright = on
+	world.applyLighting()
+end)
+
+row(world.page, 24, "No fog")
+makeSwitch(world.page, 24, false, function(on)
+	world.nofog = on
+	world.applyLighting()
+end)
+
+row(world.page, 48, "X-ray")
+makeSwitch(world.page, 48, false, function(on)
+	world.setXray(on)
+end)
+
+row(world.page, 76, "FOV (1-120)")
+world.fovBox = make("TextBox", {
+	Size = UDim2.new(0, 78, 0, 26),
+	Position = UDim2.new(1, -78, 0, 74),
+	BackgroundColor3 = COL.element,
+	Font = Enum.Font.Gotham,
+	TextSize = 13,
+	TextColor3 = COL.text,
+	Text = tostring(world.fov),
+	PlaceholderText = "fov",
+	PlaceholderColor3 = COL.sub,
+	ClearTextOnFocus = false,
+	BorderSizePixel = 0,
+}, world.page)
+round(world.fovBox, 6)
+connect(world.fovBox.FocusLost, function()
+	local n = tonumber(world.fovBox.Text)
+	if n then
+		world.fov = math.clamp(n, 1, 120)
+		world.applyFov()
+	end
+	world.fovBox.Text = tostring(world.fov)
+end)
+
 -- ========== TOOLS TAB ==========
 -- scrolling list of placeholder buttons (10 don't fit in the panel, so it scrolls)
+-- Wrapped in do..end: nothing outside this block reads these locals, and Lua's 200-local
+-- cap counts *active* locals, so closing the block hands the registers back.
+-- (Body left at its original indent to keep the diff readable.)
+do
 local toolsScroll = make("ScrollingFrame", {
 	Size = UDim2.new(1, 0, 1, 0),
 	Position = UDim2.new(0, 0, 0, 0),
@@ -1629,9 +1903,15 @@ local function sizeToolsCanvas()
 end
 connect(toolsLayout:GetPropertyChangedSignal("AbsoluteContentSize"), sizeToolsCanvas)
 sizeToolsCanvas()
+end -- Tools scope
 
 -- ========== SETTINGS ==========
 -- Cog (bottom-left) opens a panel for theming + config save/load.
+-- Whole section is scoped in do..end to give ~30 locals back to the chunk; `hubLoadConfig`
+-- is the only thing the outside world needs. Reading outer locals still works fine in here.
+-- (Body left at its original indent to keep the diff readable.)
+local hubLoadConfig
+do
 local CONFIG_FILE = "twinkhub_config.json"
 -- writefile/readfile/isfile are executor features; degrade to in-memory-only without them
 local canSaveFiles = (writefile ~= nil and readfile ~= nil and isfile ~= nil)
@@ -1708,19 +1988,15 @@ local function gatherConfig()
 	return {
 		colors = colors,
 		toggleKey = TOGGLE_KEY.Name,
-		flyKey = flyKey.Name,
+		flyKey = Fly.getKey().Name,
 		cframeSpeed = _G.CFrameSpeed,
-		gravity = customGravity,
-		hitboxSize = hitboxSize,
-		flySpeed = flightSpeed,
-		walkSpeed = walkSpeed,
-		jumpPower = jumpPower,
-		esp = {
-			box = espBox,
-			distance = espDistance,
-			health = espHealth,
-			skeleton = espSkeleton,
-		},
+		gravity = Grav.getCustom(),
+		hitboxSize = Hitbox.getSize(),
+		flySpeed = Fly.getSpeed(),
+		walkSpeed = Move.getWalkSpeed(),
+		jumpPower = Move.getJumpPower(),
+		fov = world.fov,
+		esp = Esp.get(),
 	}
 end
 
@@ -1742,45 +2018,30 @@ local function applyConfig(cfg)
 	end
 	if tonumber(cfg.cframeSpeed) then
 		_G.CFrameSpeed = math.clamp(tonumber(cfg.cframeSpeed), 0, 99999)
-		updateSpeedUI()
+		Speed.updateUI()
 	end
 	if tonumber(cfg.gravity) then
-		customGravity = math.clamp(tonumber(cfg.gravity), 0, 500)
-		updateGravUI()
+		Grav.setCustom(tonumber(cfg.gravity))
 	end
 	if tonumber(cfg.hitboxSize) then
-		hitboxSize = math.clamp(tonumber(cfg.hitboxSize), 1, 10)
-		hbBox.Text = tostring(hitboxSize)
+		Hitbox.setSize(tonumber(cfg.hitboxSize))
 	end
 	if tonumber(cfg.flySpeed) then
-		flightSpeed = math.clamp(tonumber(cfg.flySpeed), 0, FLY_MAX_SPEED)
-		flyBox.Text = tostring(flightSpeed)
+		Fly.setSpeed(tonumber(cfg.flySpeed))
 	end
 	if tonumber(cfg.walkSpeed) then
-		walkSpeed = math.clamp(tonumber(cfg.walkSpeed), 0, 500)
-		wsBox.Text = tostring(walkSpeed)
+		Move.setWalkSpeed(tonumber(cfg.walkSpeed))
 	end
 	if tonumber(cfg.jumpPower) then
-		jumpPower = math.clamp(tonumber(cfg.jumpPower), 0, 500)
-		jpBox.Text = tostring(jumpPower)
+		Move.setJumpPower(tonumber(cfg.jumpPower))
+	end
+	if tonumber(cfg.fov) then
+		world.fov = math.clamp(tonumber(cfg.fov), 1, 120)
+		world.fovBox.Text = tostring(world.fov)
+		world.applyFov()
 	end
 	if type(cfg.esp) == "table" then
-		if type(cfg.esp.box) == "boolean" then
-			espBox = cfg.esp.box
-			espSetters.box(espBox)
-		end
-		if type(cfg.esp.distance) == "boolean" then
-			espDistance = cfg.esp.distance
-			espSetters.distance(espDistance)
-		end
-		if type(cfg.esp.health) == "boolean" then
-			espHealth = cfg.esp.health
-			espSetters.health(espHealth)
-		end
-		if type(cfg.esp.skeleton) == "boolean" then
-			espSkeleton = cfg.esp.skeleton
-			espSetters.skeleton(espSkeleton)
-		end
+		Esp.set(cfg.esp)
 	end
 	local tk = keyFromName(cfg.toggleKey)
 	if tk then
@@ -1789,8 +2050,7 @@ local function applyConfig(cfg)
 	end
 	local fk = keyFromName(cfg.flyKey)
 	if fk then
-		flyKey = fk
-		flyKeyBtn.Text = fk.Name
+		Fly.setKey(fk)
 	end
 	applyTheme()
 	if refreshSettingsUI then
@@ -2042,7 +2302,8 @@ picker.preview = make("Frame", {
 	ZIndex = 5,
 }, picker.frame)
 round(picker.preview, 5)
-make("UIStroke", { Color = COL.stroke, Thickness = 1 }, picker.preview)
+-- same fixed grey as the swatches, so the preview stays visible at any colour
+make("UIStroke", { Color = Color3.fromRGB(175, 180, 190), Thickness = 1 }, picker.preview)
 
 picker.hex = make("TextBox", {
 	Size = UDim2.new(0, 100, 0, 24),
@@ -2232,7 +2493,9 @@ for i, role in ipairs(COLOR_ROLES) do
 		BorderSizePixel = 0,
 	}, line)
 	round(swatch, 4)
-	make("UIStroke", { Color = COL.stroke, Thickness = 1 }, swatch)
+	-- fixed light grey, deliberately NOT COL.stroke: a themed outline would vanish along
+	-- with the swatch when a role is set near the panel background
+	make("UIStroke", { Color = Color3.fromRGB(175, 180, 190), Thickness = 1 }, swatch)
 
 	connect(swatch.MouseButton1Click, function()
 		click()
@@ -2354,6 +2617,9 @@ do
 	end)
 end
 
+hubLoadConfig = loadConfig -- the one export: startup calls this once every tab exists
+end -- Settings scope
+
 -- ========== DRAGGING ==========
 do
 	local drag, start, pos
@@ -2391,16 +2657,16 @@ connect(UIS.InputBegan, function(i, g)
 		end
 		main.Visible = not main.Visible
 	elseif i.KeyCode == SPEED_KEY then
-		toggleSpeed()
+		Speed.toggle()
 	elseif i.KeyCode == GRAV_KEY then
-		toggleGrav()
+		Grav.toggle()
 	end
 end)
 
 selectTab("Speed")
 
 -- restore the saved theme/settings, if any (after every tab exists so the UI can sync)
-pcall(loadConfig)
+pcall(hubLoadConfig)
 
 -- version tag (bottom-right) so you can tell which copy is running
 make("TextLabel", {
@@ -2548,7 +2814,7 @@ connect(player.Chatted, function(msg)
 			-- =========================
 
 			if c == "tp" then
-				local target = findPlayer(a)
+				local target = hubFindPlayer(a)
 
 				if target then
 					local targetHRP = target.Character and target.Character:FindFirstChild("HumanoidRootPart")
@@ -2913,7 +3179,7 @@ connect(player.Chatted, function(msg)
 					end
 				end)
 			elseif c == "sp" then
-				local target = findPlayer(a)
+				local target = hubFindPlayer(a)
 
 				if target then
 					local hum = target.Character and target.Character:FindFirstChildOfClass("Humanoid")
@@ -2955,7 +3221,7 @@ connect(player.Chatted, function(msg)
 					workspace.CurrentCamera.CameraSubject = myHum
 				end
 			elseif c == "sfly" then
-				doSfly(a)
+				Fly.doSfly(a)
 			end
 		end)
 
@@ -2965,7 +3231,7 @@ connect(player.Chatted, function(msg)
 	-- TELEPORT
 	-- =========================
 	elseif cmd == "tp" then
-		local target = findPlayer(arg)
+		local target = hubFindPlayer(arg)
 
 		if target then
 			local targetHRP = target.Character and target.Character:FindFirstChild("HumanoidRootPart")
@@ -3306,7 +3572,7 @@ connect(player.Chatted, function(msg)
 	-- =========================
 	elseif cmd == "sp" then
 		if arg ~= "" then
-			local target = findPlayer(arg)
+			local target = hubFindPlayer(arg)
 
 			if target then
 				local hum = target.Character and target.Character:FindFirstChildOfClass("Humanoid")
@@ -3482,7 +3748,7 @@ connect(player.Chatted, function(msg)
 			workspace.CurrentCamera.CameraSubject = myHum
 		end
 	elseif cmd == "sfly" then
-		doSfly(arg)
+		Fly.doSfly(arg)
 	end
 end)
 
@@ -3490,12 +3756,13 @@ _G.ScriptHubCleanup = function()
 	for _, c in ipairs(conns) do
 		c:Disconnect()
 	end
-	for plr in pairs(espObjects) do
-		espRemove(plr)
+	for plr in pairs(Esp.objects) do
+		Esp.remove(plr)
 	end
-	hbRestoreAll()
-	noclipRestore()
-	stopFly()
+	Hitbox.restore()
+	Move.restore()
+	world.restore() -- put Lighting / X-ray / FOV back the way we found them
+	Fly.stop()
 	-- make sure we're not left stuck in someone else's camera
 	pcall(function()
 		local myhum = player.Character and player.Character:FindFirstChildOfClass("Humanoid")
