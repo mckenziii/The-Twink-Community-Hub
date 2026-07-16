@@ -3218,22 +3218,22 @@ hubRunCommand = function(input)
 
 		-- works from chat (with !), the bar at the bottom of the hub, or !cmdbar
 		local commands = {
-			"tp <player> - Teleport to player",
-			"sp <player> - Spectate player",
-			"unsp - Stop spectating",
-			"sfly <speed> - Toggle fly / set fly speed",
-			"ws <n> - Set walk speed",
-			"jp <n> - Set jump power",
-			"speed <n> - Set CFrame speed",
-			"grav <n> - Set custom gravity",
-			"fov <n> - Set field of view",
-			"hitbox <n> - Set hitbox size",
-			"clicktp - Toggle the Click TP window",
-			"infbaseplate - Toggle the infinite baseplate",
-			"runcode <lua> / lua <lua> - Execute Lua",
-			"cmdbar - Open the floating command bar",
-			"unload - Remove the hub",
-			"help - Open this menu",
+			"!tp <player> - Teleport to player",
+			"!sp <player> - Spectate player",
+			"!unsp - Stop spectating",
+			"!sfly <speed> - Toggle fly / set fly speed",
+			"!ws <n> - Set walk speed",
+			"!jp <n> - Set jump power",
+			"!speed <n> - Set CFrame speed",
+			"!grav <n> - Set custom gravity",
+			"!fov <n> - Set field of view",
+			"!hitbox <n> - Set hitbox size",
+			"!clicktp - Toggle the Click TP window",
+			"!infbaseplate - Toggle the infinite baseplate",
+			"!runcode <lua> / lua <lua> - Execute Lua",
+			"!cmdbar - Open the floating command bar",
+			"!unload - Remove the hub",
+			"!help - Open this menu",
 		}
 
 		local y = 5
