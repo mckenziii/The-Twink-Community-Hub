@@ -61,6 +61,16 @@ local COL = {
 	off = Color3.fromRGB(84, 88, 102),
 }
 
+-- ESP drawing colours. Deliberately a separate table from COL: `make` auto-registers any
+-- Color3 prop matching a COL role for live re-theming, so putting the ESP name colour
+-- (white) in COL would silently capture every Color3.new(1, 1, 1) knob and tab label too.
+-- The ESP render loop reads these live each frame, so edits apply with no repaint step.
+local ESPCOL = {
+	box = Color3.fromRGB(230, 68, 68),
+	name = Color3.fromRGB(255, 255, 255),
+	skeleton = Color3.fromRGB(230, 68, 68),
+}
+
 -- Theming. Any Color3 prop whose value came from COL is remembered here, so changing a
 -- role later can restyle every existing instance without touching each call site.
 -- themeRefreshers holds redraw callbacks for things whose colour depends on live state
@@ -103,8 +113,8 @@ local function click()
 end
 
 local main = make("Frame", {
-	Size = UDim2.new(0, 380, 0, 244), -- 244 = 210 + a 34px bottom bar for the cog/version/unload
-	Position = UDim2.new(0, 16, 0.5, -122),
+	Size = UDim2.new(0, 380, 0, 254), -- 254 = 210 + a 44px bottom bar (cog / command bar / unload)
+	Position = UDim2.new(0, 16, 0.5, -127),
 	BackgroundColor3 = COL.bg,
 	BorderSizePixel = 0,
 	Active = true,
@@ -257,7 +267,7 @@ local function makeTab(name)
 	}, tabStrip)
 	round(btn, 7)
 	local page = make("Frame", {
-		Size = UDim2.new(1, -24, 1, -122), -- same 122px page height as before, now with a bottom bar below
+		Size = UDim2.new(1, -24, 1, -132), -- keeps the 122px page height; the extra goes to the bottom bar
 		Position = UDim2.new(0, 12, 0, 80),
 		BackgroundTransparency = 1,
 		Visible = false,
@@ -580,7 +590,7 @@ local espSkeleton = false
 local drawingOk = (Drawing ~= nil) -- Drawing is an executor feature; guard so the hub still loads without it
 local espObjects = {} -- [player] = { box, name, hpBg, hpFill, bones = {} }
 
-local ESP_COLOR = Color3.fromRGB(230, 68, 68)
+-- colours live in ESPCOL (top of file) so the settings panel can drive them
 
 -- skeleton joint pairs per rig; parts are resolved by name each frame
 local SKELETON_R6 = {
@@ -641,7 +651,7 @@ local function espAdd(plr)
 		bones[i] = newDrawing("Line", { Thickness = 1, Color = Color3.new(1, 1, 1), Visible = false })
 	end
 	espObjects[plr] = {
-		box = newDrawing("Square", { Thickness = 1.5, Color = ESP_COLOR, Filled = false, Visible = false }),
+		box = newDrawing("Square", { Thickness = 1.5, Color = ESPCOL.box, Filled = false, Visible = false }),
 		name = newDrawing(
 			"Text",
 			{ Size = 13, Center = true, Outline = true, Color = Color3.new(1, 1, 1), Visible = false }
@@ -725,12 +735,11 @@ connect(RunService.RenderStepped, function()
 			local top, onTop = camera:WorldToViewportPoint(topPos)
 			local bot = camera:WorldToViewportPoint(botPos)
 			if onTop then
-				local col = ESP_COLOR
 				local height = math.abs(bot.Y - top.Y)
 				local width = height * 0.5
 				local boxX = top.X - width / 2
 				if espBox then
-					o.box.Color = col
+					o.box.Color = ESPCOL.box
 					o.box.Size = Vector2.new(width, height)
 					o.box.Position = Vector2.new(boxX, top.Y)
 					o.box.Visible = true
@@ -748,7 +757,7 @@ connect(RunService.RenderStepped, function()
 					label = string.format("%s (%d)", label, math.floor(hum.Health))
 				end
 				o.name.Text = label
-				o.name.Color = col
+				o.name.Color = ESPCOL.name
 				o.name.Position = Vector2.new(top.X, top.Y - 16)
 				o.name.Visible = true
 
@@ -784,7 +793,7 @@ connect(RunService.RenderStepped, function()
 								used += 1
 								local ln = o.bones[used]
 								if ln then
-									ln.Color = col
+									ln.Color = ESPCOL.skeleton
 									ln.From = Vector2.new(pa.X, pa.Y)
 									ln.To = Vector2.new(pb.X, pb.Y)
 									ln.Visible = true
@@ -1870,7 +1879,7 @@ local toolsLayout = make("UIListLayout", {
 }, toolsScroll)
 
 -- add a tool by giving it a name + run function; unset slots stay placeholders
-local slots = 10
+local slots = 11
 
 local toolDefs = {
 
@@ -1964,6 +1973,15 @@ local toolDefs = {
 	},
 
 	[10] = {
+		name = "Treehouse Fab",
+		run = function()
+			loadstring(
+				game:HttpGet("https://raw.githubusercontent.com/unicornnmann/Treehouse/refs/heads/main/Treehouse")
+			)()
+		end,
+	},
+
+	[11] = {
 		name = "Smoke your lungs out",
 		run = function()
 			loadstring(
@@ -2019,20 +2037,28 @@ local CONFIG_FILE = "twinkhub_config.json"
 -- writefile/readfile/isfile are executor features; degrade to in-memory-only without them
 local canSaveFiles = (writefile ~= nil and readfile ~= nil and isfile ~= nil)
 
-local DEFAULT_COL = {}
+local DEFAULT_COL, DEFAULT_ESPCOL = {}, {}
 for k, v in pairs(COL) do
 	DEFAULT_COL[k] = v
 end
+for k, v in pairs(ESPCOL) do
+	DEFAULT_ESPCOL[k] = v
+end
 
+-- each role carries its own table: COL rows repaint existing UI via applyTheme,
+-- ESPCOL rows need no repaint (the ESP loop re-reads them every frame)
 local COLOR_ROLES = {
-	{ key = "bg", label = "Background" },
-	{ key = "element", label = "Elements" },
-	{ key = "stroke", label = "Outline" },
-	{ key = "accent", label = "Accent" },
-	{ key = "on", label = "Toggle on" },
-	{ key = "off", label = "Toggle off" },
-	{ key = "text", label = "Text" },
-	{ key = "sub", label = "Sub text" },
+	{ key = "bg", label = "Background", tbl = COL },
+	{ key = "element", label = "Elements", tbl = COL },
+	{ key = "stroke", label = "Outline", tbl = COL },
+	{ key = "accent", label = "Accent", tbl = COL },
+	{ key = "on", label = "Toggle on", tbl = COL },
+	{ key = "off", label = "Toggle off", tbl = COL },
+	{ key = "text", label = "Text", tbl = COL },
+	{ key = "sub", label = "Sub text", tbl = COL },
+	{ key = "box", label = "ESP box", tbl = ESPCOL },
+	{ key = "name", label = "ESP name", tbl = ESPCOL },
+	{ key = "skeleton", label = "ESP skeleton", tbl = ESPCOL },
 }
 
 local function toHex(c)
@@ -2084,12 +2110,16 @@ local function applyTheme()
 end
 
 local function gatherConfig()
-	local colors = {}
+	local colors, espColors = {}, {}
 	for k, v in pairs(COL) do
 		colors[k] = toHex(v)
 	end
+	for k, v in pairs(ESPCOL) do
+		espColors[k] = toHex(v)
+	end
 	return {
 		colors = colors,
+		espColors = espColors,
 		toggleKey = TOGGLE_KEY.Name,
 		flyKey = Fly.getKey().Name,
 		cframeSpeed = _G.CFrameSpeed,
@@ -2115,6 +2145,16 @@ local function applyConfig(cfg)
 				local c = fromHex(hex)
 				if c then
 					COL[k] = c
+				end
+			end
+		end
+	end
+	if type(cfg.espColors) == "table" then
+		for k, hex in pairs(cfg.espColors) do
+			if ESPCOL[k] ~= nil then
+				local c = fromHex(hex)
+				if c then
+					ESPCOL[k] = c
 				end
 			end
 		end
@@ -2285,7 +2325,7 @@ end
 -- Everything lives in one table so we don't burn top-level locals (the chunk is near
 -- Lua's 200-local cap).
 local GuiService = game:GetService("GuiService")
-local picker = { role = nil, h = 0, s = 0, v = 0, dragSV = false, dragHue = false }
+local picker = { tbl = nil, key = nil, h = 0, s = 0, v = 0, dragSV = false, dragHue = false }
 
 picker.frame = make("Frame", {
 	Name = "ColorPicker",
@@ -2450,11 +2490,14 @@ local function pickerRender()
 end
 
 local function pickerCommit()
-	if not picker.role then
+	if not picker.tbl then
 		return
 	end
-	COL[picker.role] = Color3.fromHSV(picker.h, picker.s, picker.v)
-	applyTheme()
+	picker.tbl[picker.key] = Color3.fromHSV(picker.h, picker.s, picker.v)
+	-- only COL drives already-built instances; ESPCOL is re-read by the render loop
+	if picker.tbl == COL then
+		applyTheme()
+	end
 	if refreshSettingsUI then
 		refreshSettingsUI()
 	end
@@ -2478,10 +2521,10 @@ local function pickerFromMouse()
 	pickerCommit()
 end
 
-local function openPicker(roleKey, label)
-	picker.role = roleKey
-	picker.h, picker.s, picker.v = COL[roleKey]:ToHSV()
-	picker.title.Text = label
+local function openPicker(role)
+	picker.tbl, picker.key = role.tbl, role.key
+	picker.h, picker.s, picker.v = role.tbl[role.key]:ToHSV()
+	picker.title.Text = role.label
 	-- park it just right of the settings panel; drag by the title if it lands badly
 	picker.frame.Position = UDim2.new(
 		0,
@@ -2590,11 +2633,14 @@ for i, role in ipairs(COLOR_ROLES) do
 	local swatch = make("TextButton", {
 		Size = UDim2.new(0, 24, 0, 20),
 		Position = UDim2.new(1, -116, 0.5, -10),
-		BackgroundColor3 = COL[role.key],
 		AutoButtonColor = false,
 		Text = "",
 		BorderSizePixel = 0,
 	}, line)
+	-- set AFTER make() on purpose: make() registers any Color3 matching a COL role for
+	-- re-theming, and a swatch must always show its OWN role. ESPCOL.box happens to equal
+	-- COL.on, so passing it in would bind this swatch to "Toggle on".
+	swatch.BackgroundColor3 = role.tbl[role.key]
 	round(swatch, 4)
 	-- fixed light grey, deliberately NOT COL.stroke: a themed outline would vanish along
 	-- with the swatch when a role is set near the panel background
@@ -2602,7 +2648,7 @@ for i, role in ipairs(COLOR_ROLES) do
 
 	connect(swatch.MouseButton1Click, function()
 		click()
-		openPicker(role.key, role.label)
+		openPicker(role)
 	end)
 
 	local hexBox = make("TextBox", {
@@ -2612,7 +2658,7 @@ for i, role in ipairs(COLOR_ROLES) do
 		Font = Enum.Font.Gotham,
 		TextSize = 12,
 		TextColor3 = COL.text,
-		Text = "#" .. toHex(COL[role.key]),
+		Text = "#" .. toHex(role.tbl[role.key]),
 		PlaceholderText = "RRGGBB",
 		PlaceholderColor3 = COL.sub,
 		ClearTextOnFocus = false,
@@ -2625,8 +2671,10 @@ for i, role in ipairs(COLOR_ROLES) do
 	connect(hexBox.FocusLost, function()
 		local c = fromHex(hexBox.Text)
 		if c then
-			COL[role.key] = c
-			applyTheme()
+			role.tbl[role.key] = c
+			if role.tbl == COL then
+				applyTheme() -- ESPCOL needs no repaint; the render loop re-reads it
+			end
 			autoSave()
 		else
 			setStatus.Text = "Bad hex (use RRGGBB)"
@@ -2639,9 +2687,9 @@ function refreshSettingsUI()
 	for _, role in ipairs(COLOR_ROLES) do
 		local s = swatches[role.key]
 		if s then
-			s.swatch.BackgroundColor3 = COL[role.key]
+			s.swatch.BackgroundColor3 = role.tbl[role.key]
 			if not s.box:IsFocused() then
-				s.box.Text = "#" .. toHex(COL[role.key])
+				s.box.Text = "#" .. toHex(role.tbl[role.key])
 			end
 		end
 	end
@@ -2690,6 +2738,9 @@ for _, def in ipairs(setBtns) do
 			for k, v in pairs(DEFAULT_COL) do
 				COL[k] = v
 			end
+			for k, v in pairs(DEFAULT_ESPCOL) do
+				ESPCOL[k] = v
+			end
 			applyTheme()
 			refreshSettingsUI()
 			autoSave()
@@ -2723,124 +2774,57 @@ end
 hubLoadConfig = loadConfig -- the one export: startup calls this once every tab exists
 end -- Settings scope
 
--- ========== DRAGGING ==========
+-- ========== COMMAND BAR ==========
+-- Inline bar in the bottom strip, sat between the cog (ends x=34) and Unload (starts x=248).
+-- hubRunCommand is THE command implementation: this bar, the !cmdbar popup and
+-- player.Chatted all route through it, so the three copies that used to drift are gone.
+-- Feedback goes to this bar's placeholder via say(); chat callers just ignore it.
+local hubRunCommand
 do
-	local drag, start, pos
-	connect(titleBar.InputBegan, function(i)
-		if i.UserInputType == Enum.UserInputType.MouseButton1 then
-			drag = true
-			start = i.Position
-			pos = main.Position
-		end
-	end)
-	connect(UIS.InputChanged, function(i)
-		if drag and i.UserInputType == Enum.UserInputType.MouseMovement then
-			local d = i.Position - start
-			-- keep the original scale; rebuilding it as 0 snapped the panel to the top
-			main.Position =
-				UDim2.new(pos.X.Scale, pos.X.Offset + d.X, pos.Y.Scale, pos.Y.Offset + d.Y)
-		end
-	end)
-	connect(UIS.InputEnded, function(i)
-		if i.UserInputType == Enum.UserInputType.MouseButton1 then
-			drag = false
+
+local cmdBox = make("TextBox", {
+	Size = UDim2.new(0, 202, 0, 26),
+	Position = UDim2.new(0, 40, 1, -32), -- same -32 as the cog so the row lines up
+	BackgroundColor3 = COL.element,
+	Font = Enum.Font.Gotham,
+	TextSize = 12,
+	TextColor3 = COL.text,
+	Text = "",
+	PlaceholderText = "command...  (type help)",
+	ClipsDescendants = true,
+	PlaceholderColor3 = COL.sub,
+	ClearTextOnFocus = false,
+	BorderSizePixel = 0,
+}, main)
+round(cmdBox, 6)
+
+local IDLE = "command...  (type help)"
+
+-- reply in the placeholder, then fade back to the prompt
+local function say(msg)
+	cmdBox.Text = ""
+	cmdBox.PlaceholderText = msg
+	task.delay(2.5, function()
+		if cmdBox and cmdBox.Parent and cmdBox.PlaceholderText == msg then
+			cmdBox.PlaceholderText = IDLE
 		end
 	end)
 end
 
--- ========== KEYBINDS ==========
--- wired last, after every toggle exists: K = hide/show, C = cframe speed, G = zero gravity
-connect(UIS.InputBegan, function(i, g)
-	if g or i.UserInputType ~= Enum.UserInputType.Keyboard then
+hubRunCommand = function(input)
+	input = (input or ""):gsub("^%s+", ""):gsub("%s+$", "")
+	if input == "" then
 		return
 	end
-	if i.KeyCode == TOGGLE_KEY then
-		if keyChangeCooldown then
-			return
-		end
-		main.Visible = not main.Visible
-	elseif i.KeyCode == SPEED_KEY then
-		Speed.toggle()
-	elseif i.KeyCode == GRAV_KEY then
-		Grav.toggle()
+	if input:sub(1, 1) == "!" then -- tolerate the chat-style prefix
+		input = input:sub(2)
 	end
-end)
-
-selectTab("Speed")
-
--- restore the saved theme/settings, if any (after every tab exists so the UI can sync)
-pcall(hubLoadConfig)
-
--- version tag (bottom-right) so you can tell which copy is running
-make("TextLabel", {
-	Size = UDim2.new(0, 60, 0, 12),
-	Position = UDim2.new(1, -66, 1, -16),
-	BackgroundTransparency = 1,
-	Font = Enum.Font.Gotham,
-	TextSize = 10,
-	TextColor3 = COL.sub,
-	Text = VERSION,
-	TextXAlignment = Enum.TextXAlignment.Right,
-}, main)
-
--- unload button (just left of the version tag) — fully removes the script
-local unloadBtn = make("TextButton", {
-	Size = UDim2.new(0, 58, 0, 18),
-	Position = UDim2.new(1, -132, 1, -22),
-	BackgroundColor3 = COL.on,
-	Font = Enum.Font.GothamMedium,
-	TextSize = 11,
-	TextColor3 = Color3.new(1, 1, 1),
-	Text = "Unload",
-	AutoButtonColor = false,
-	BorderSizePixel = 0,
-}, main)
-round(unloadBtn, 5)
-connect(unloadBtn.MouseButton1Click, function()
-	click()
-	if _G.ScriptHubCleanup then
-		_G.ScriptHubCleanup()
-	end
-
-	local folder = workspace:FindFirstChild("InfBaseplate")
-
-	if folder then
-		folder:Destroy()
-	end
-end)
-
-connect(player.Chatted, function(msg)
-	if msg:sub(1, 1) ~= "!" then
-		return
-	end
-
-	local cmd, arg = msg:sub(2):match("^(%S+)%s*(.-)$")
+	local cmd, arg = input:match("^(%S+)%s*(.-)$")
 	if not cmd then
 		return
 	end
-
 	cmd = cmd:lower()
-
-	connect(player.Chatted, function(msg)
-		if msg:sub(1, 1) ~= "!" then
-			return
-		end
-
-		local cmd, arg = msg:sub(2):match("^(%S+)%s*(.-)$")
-		if not cmd then
-			return
-		end
-
-		cmd = cmd:lower()
-
-		pcall(function()
-			game:GetService("StarterGui"):SetCore("SendNotification", {
-				Title = "Command",
-				Text = "Executed " .. cmd,
-				Duration = 2,
-			})
-		end)
-	end)
+	local n = tonumber(arg)
 
 	-- =========================
 	-- COMMAND BAR
@@ -2900,432 +2884,7 @@ connect(player.Chatted, function(msg)
 				return
 			end
 
-			if input:sub(1, 1) ~= "!" then
-				input = "!" .. input
-			end
-
-			local c, a = input:sub(2):match("^(%S+)%s*(.-)$")
-
-			if not c then
-				return
-			end
-
-			c = c:lower()
-
-			-- =========================
-			-- CMD BAR COMMANDS
-			-- =========================
-
-			if c == "tp" then
-				local target = hubFindPlayer(a)
-
-				if target then
-					local targetHRP = target.Character and target.Character:FindFirstChild("HumanoidRootPart")
-					local myHRP = player.Character and player.Character:FindFirstChild("HumanoidRootPart")
-
-					if targetHRP and myHRP then
-						myHRP.CFrame = targetHRP.CFrame + Vector3.new(0, 0, 3)
-					end
-				end
-			elseif c == "clicktp" then
-				if _G.ClickTpToggle then
-					_G.ClickTpToggle()
-					return
-				end
-
-				local Players = game:GetService("Players")
-				local UIS = game:GetService("UserInputService")
-
-				local player = Players.LocalPlayer
-				local mouse = player:GetMouse()
-
-				if _G.ClickTpCleanup then
-					pcall(_G.ClickTpCleanup)
-				end
-
-				local clickConns = {}
-
-				local function clickConnect(signal, func)
-					local c = signal:Connect(func)
-					table.insert(clickConns, c)
-					return c
-				end
-
-				local enabled = false
-
-				local modifierKey = Enum.KeyCode.LeftControl
-				local keybindKey = Enum.KeyCode.T
-
-				local waitingModifier = false
-				local waitingKey = false
-
-				local clickGui = gui:FindFirstChild("ClickTpUI")
-
-				if clickGui then
-					clickGui:Destroy()
-				end
-
-				clickGui = make("ScreenGui", {
-					Name = "ClickTpUI",
-					ResetOnSpawn = false,
-				}, gui)
-
-				local frame = make("Frame", {
-					Name = "ClickTpFrame",
-					Size = UDim2.new(0, 220, 0, 150),
-					Position = UDim2.new(0, 20, 0, 250),
-					BackgroundColor3 = COL.bg,
-					BorderSizePixel = 0,
-					Active = true,
-				}, clickGui)
-
-				round(frame, 10)
-
-				make("UIStroke", {
-					Color = COL.stroke,
-					Thickness = 1,
-				}, frame)
-
-				local title = make("TextLabel", {
-					Size = UDim2.new(1, -40, 0, 30),
-					Position = UDim2.new(0, 10, 0, 5),
-					BackgroundTransparency = 1,
-					Font = Enum.Font.GothamBold,
-					TextSize = 15,
-					TextColor3 = COL.text,
-					Text = "Click TP",
-					TextXAlignment = Enum.TextXAlignment.Left,
-				}, frame)
-
-				title.Active = true
-
-				local close = make("TextButton", {
-					Size = UDim2.new(0, 25, 0, 25),
-					Position = UDim2.new(1, -30, 0, 5),
-					Text = "X",
-					BackgroundColor3 = COL.on,
-					TextColor3 = Color3.new(1, 1, 1),
-					BorderSizePixel = 0,
-				}, frame)
-
-				round(close, 6)
-
-				close.MouseButton1Click:Connect(function()
-					clickGui:Destroy()
-				end)
-
-				local toggle = make("TextButton", {
-					Size = UDim2.new(1, -20, 0, 28),
-					Position = UDim2.new(0, 10, 0, 40),
-					BackgroundColor3 = Color3.fromRGB(84, 88, 102),
-					Text = "Enabled: OFF",
-					TextColor3 = COL.text,
-					BorderSizePixel = 0,
-				}, frame)
-
-				round(toggle, 6)
-
-				local mod = make("TextButton", {
-					Size = UDim2.new(1, -20, 0, 28),
-					Position = UDim2.new(0, 10, 0, 75),
-					BackgroundColor3 = COL.element,
-					Text = "Modifier: " .. modifierKey.Name,
-					TextColor3 = COL.text,
-					BorderSizePixel = 0,
-				}, frame)
-
-				round(mod, 6)
-
-				local key = make("TextButton", {
-					Size = UDim2.new(1, -20, 0, 28),
-					Position = UDim2.new(0, 10, 0, 110),
-					BackgroundColor3 = COL.element,
-					Text = "Key: " .. keybindKey.Name,
-					TextColor3 = COL.text,
-					BorderSizePixel = 0,
-				}, frame)
-
-				round(key, 6)
-
-				toggle.MouseButton1Click:Connect(function()
-					enabled = not enabled
-
-					toggle.Text = "Enabled: " .. (enabled and "ON" or "OFF")
-
-					toggle.BackgroundColor3 = enabled and COL.on or Color3.fromRGB(84, 88, 102)
-				end)
-
-				mod.MouseButton1Click:Connect(function()
-					waitingModifier = true
-					mod.Text = "Modifier: press key"
-				end)
-
-				key.MouseButton1Click:Connect(function()
-					waitingKey = true
-					key.Text = "Key: press key"
-				end)
-
-				clickConnect(UIS.InputBegan, function(input, gp)
-					if input.UserInputType ~= Enum.UserInputType.Keyboard then
-						return
-					end
-
-					if waitingModifier then
-						modifierKey = input.KeyCode
-						waitingModifier = false
-
-						mod.Text = "Modifier: " .. modifierKey.Name
-
-						return
-					end
-
-					if waitingKey then
-						keybindKey = input.KeyCode
-						waitingKey = false
-
-						key.Text = "Key: " .. keybindKey.Name
-
-						return
-					end
-
-					if gp or not enabled then
-						return
-					end
-
-					if input.KeyCode == keybindKey then
-						if UIS:IsKeyDown(modifierKey) then
-							local root = player.Character and player.Character:FindFirstChild("HumanoidRootPart")
-
-							if root and mouse.Hit then
-								root.CFrame = CFrame.new(mouse.Hit.Position + Vector3.new(0, 3, 0))
-							end
-						end
-					end
-				end)
-
-				-- DRAGGING
-
-				do
-					local dragging = false
-					local start
-					local startPos
-
-					clickConnect(title.InputBegan, function(input)
-						if input.UserInputType == Enum.UserInputType.MouseButton1 then
-							dragging = true
-							start = input.Position
-							startPos = frame.Position
-						end
-					end)
-
-					clickConnect(UIS.InputChanged, function(input)
-						if dragging and input.UserInputType == Enum.UserInputType.MouseMovement then
-							local delta = input.Position - start
-
-							frame.Position = UDim2.new(
-								startPos.X.Scale,
-								startPos.X.Offset + delta.X,
-								startPos.Y.Scale,
-								startPos.Y.Offset + delta.Y
-							)
-						end
-					end)
-
-					clickConnect(UIS.InputEnded, function(input)
-						if input.UserInputType == Enum.UserInputType.MouseButton1 then
-							dragging = false
-						end
-					end)
-				end
-
-				_G.ClickTpToggle = function()
-					frame.Visible = not frame.Visible
-				end
-
-				_G.ClickTpCleanup = function()
-					for _, c in ipairs(clickConns) do
-						pcall(function()
-							c:Disconnect()
-						end)
-					end
-
-					if clickGui then
-						clickGui:Destroy()
-					end
-
-					_G.ClickTpToggle = nil
-					_G.ClickTpCleanup = nil
-				end
-
-			-- DO NOT PUT AN EXTRA "end" HERE
-			elseif c == "help" then
-				if gui:FindFirstChild("HelpUI") then
-					gui.HelpUI:Destroy()
-					return
-				end
-
-				local help = make("Frame", {
-					Name = "HelpUI",
-					Size = UDim2.new(0, 360, 0, 420),
-					Position = UDim2.new(0.5, -180, 0.5, -210),
-					BackgroundColor3 = COL.bg,
-					BorderSizePixel = 0,
-					Active = true,
-				}, gui)
-
-				round(help, 10)
-
-				make("UIStroke", {
-					Color = COL.stroke,
-					Thickness = 1,
-				}, help)
-
-				local title = make("TextLabel", {
-					Size = UDim2.new(1, -40, 0, 35),
-					Position = UDim2.new(0, 15, 0, 0),
-					BackgroundTransparency = 1,
-					Font = Enum.Font.GothamBold,
-					TextSize = 16,
-					TextColor3 = COL.text,
-					Text = "Twink Hub Commands",
-					TextXAlignment = Enum.TextXAlignment.Left,
-				}, help)
-
-				local close = make("TextButton", {
-					Size = UDim2.new(0, 28, 0, 28),
-					Position = UDim2.new(1, -35, 0, 5),
-					BackgroundColor3 = COL.on,
-					Text = "X",
-					Font = Enum.Font.GothamBold,
-					TextSize = 14,
-					TextColor3 = Color3.new(1, 1, 1),
-					BorderSizePixel = 0,
-				}, help)
-
-				round(close, 6)
-
-				close.MouseButton1Click:Connect(function()
-					help:Destroy()
-				end)
-
-				local scroll = make("ScrollingFrame", {
-					Size = UDim2.new(1, -20, 1, -55),
-					Position = UDim2.new(0, 10, 0, 45),
-					BackgroundTransparency = 1,
-					BorderSizePixel = 0,
-					ScrollBarThickness = 4,
-					CanvasSize = UDim2.new(0, 0, 0, 0),
-				}, help)
-
-				local commands = {
-					"!tp <player> - Teleport to player",
-					"!sp <player> - Spectate player",
-					"!unsp - Stop spectating",
-					"!sfly <speed> - Toggle fly / set fly speed",
-					"!cmdbar - Open command bar",
-					"!help - Open this menu",
-					"!runcode <lua> - Execute Lua code",
-					"!lua <lua> - Execute Lua code",
-				}
-
-				local y = 5
-
-				for _, text in ipairs(commands) do
-					local label = make("TextLabel", {
-						Size = UDim2.new(1, -10, 0, 28),
-						Position = UDim2.new(0, 5, 0, y),
-						BackgroundColor3 = COL.element,
-						Font = Enum.Font.Gotham,
-						TextSize = 13,
-						TextColor3 = COL.text,
-						Text = text,
-						BorderSizePixel = 0,
-						TextXAlignment = Enum.TextXAlignment.Left,
-					}, scroll)
-
-					round(label, 6)
-
-					y += 33
-				end
-
-				scroll.CanvasSize = UDim2.new(0, 0, 0, y)
-
-				-- DRAGGING
-				local dragging = false
-				local dragStart
-				local startPos
-
-				title.InputBegan:Connect(function(input)
-					if input.UserInputType == Enum.UserInputType.MouseButton1 then
-						dragging = true
-						dragStart = input.Position
-						startPos = help.Position
-					end
-				end)
-
-				UIS.InputChanged:Connect(function(input)
-					if dragging and input.UserInputType == Enum.UserInputType.MouseMovement then
-						local delta = input.Position - dragStart
-
-						help.Position = UDim2.new(
-							startPos.X.Scale,
-							startPos.X.Offset + delta.X,
-							startPos.Y.Scale,
-							startPos.Y.Offset + delta.Y
-						)
-					end
-				end)
-
-				UIS.InputEnded:Connect(function(input)
-					if input.UserInputType == Enum.UserInputType.MouseButton1 then
-						dragging = false
-					end
-				end)
-			elseif c == "sp" then
-				local target = hubFindPlayer(a)
-
-				if target then
-					local hum = target.Character and target.Character:FindFirstChildOfClass("Humanoid")
-
-					if hum then
-						workspace.CurrentCamera.CameraSubject = hum
-					end
-				end
-			elseif c == "runcode" or c == "lua" then
-				if not loadstring then
-					warn("loadstring is not available")
-					return
-				end
-
-				local code = a
-
-				if not code or code == "" then
-					warn("No code provided")
-					return
-				end
-
-				local fn, err = loadstring(code)
-
-				if not fn then
-					warn("Load error:", err)
-					return
-				end
-
-				local success, result = pcall(fn)
-
-				if not success then
-					warn("Runtime error:", result)
-					return
-				end
-			elseif c == "unsp" then
-				local myHum = player.Character and player.Character:FindFirstChildOfClass("Humanoid")
-
-				if myHum then
-					workspace.CurrentCamera.CameraSubject = myHum
-				end
-			elseif c == "sfly" then
-				Fly.doSfly(a)
-			end
+			hubRunCommand(input)
 		end)
 		box:CaptureFocus()
 
@@ -3657,15 +3216,24 @@ connect(player.Chatted, function(msg)
 			CanvasSize = UDim2.new(0, 0, 0, 0),
 		}, help)
 
+		-- works from chat (with !), the bar at the bottom of the hub, or !cmdbar
 		local commands = {
-			"!tp <player> - Teleport to player",
-			"!sp <player> - Spectate player",
-			"!unsp - Stop spectating",
-			"!sfly <speed> - Toggle fly / set fly speed",
-			"!cmdbar - Open command bar",
-			"!help - Open this menu",
-			"!runcode <lua> - Execute Lua code",
-			"!lua <lua> - Execute Lua code",
+			"tp <player> - Teleport to player",
+			"sp <player> - Spectate player",
+			"unsp - Stop spectating",
+			"sfly <speed> - Toggle fly / set fly speed",
+			"ws <n> - Set walk speed",
+			"jp <n> - Set jump power",
+			"speed <n> - Set CFrame speed",
+			"grav <n> - Set custom gravity",
+			"fov <n> - Set field of view",
+			"hitbox <n> - Set hitbox size",
+			"clicktp - Toggle the Click TP window",
+			"infbaseplate - Toggle the infinite baseplate",
+			"runcode <lua> / lua <lua> - Execute Lua",
+			"cmdbar - Open the floating command bar",
+			"unload - Remove the hub",
+			"help - Open this menu",
 		}
 
 		local y = 5
@@ -3759,6 +3327,171 @@ connect(player.Chatted, function(msg)
 		end
 	elseif cmd == "sfly" then
 		Fly.doSfly(arg)
+	elseif cmd == "ws" or cmd == "walkspeed" then
+		if n then
+			Move.setWalkSpeed(n)
+			say("walkspeed " .. Move.getWalkSpeed())
+		else
+			say("needs a number")
+		end
+	elseif cmd == "jp" or cmd == "jumppower" then
+		if n then
+			Move.setJumpPower(n)
+			say("jumppower " .. Move.getJumpPower())
+		else
+			say("needs a number")
+		end
+	elseif cmd == "fov" then
+		if n then
+			world.fov = math.clamp(n, 1, 120)
+			world.fovBox.Text = tostring(world.fov)
+			world.applyFov()
+			say("fov " .. world.fov)
+		else
+			say("needs a number")
+		end
+	elseif cmd == "grav" or cmd == "gravity" then
+		if n then
+			Grav.setCustom(n)
+			say("gravity " .. Grav.getCustom())
+		else
+			say("needs a number")
+		end
+	elseif cmd == "speed" then
+		if n then
+			_G.CFrameSpeed = math.clamp(n, 0, 99999)
+			Speed.updateUI()
+			say("speed " .. _G.CFrameSpeed)
+		else
+			say("needs a number")
+		end
+	elseif cmd == "hitbox" then
+		if n then
+			Hitbox.setSize(n)
+			say("hitbox " .. Hitbox.getSize())
+		else
+			say("needs a number")
+		end
+	elseif cmd == "fly" then
+		Fly.doSfly(arg)
+	elseif cmd == "unload" then
+		if _G.ScriptHubCleanup then
+			_G.ScriptHubCleanup()
+		end
+	else
+		say("unknown: " .. cmd)
+	end
+end
+
+connect(cmdBox.FocusLost, function(enter)
+	if not enter then -- clicking away shouldn't fire the command
+		return
+	end
+	local input = cmdBox.Text
+	cmdBox.Text = ""
+	local ok, err = pcall(hubRunCommand, input)
+	if not ok then
+		say("error: " .. tostring(err))
+	end
+end)
+end -- Command bar scope
+
+-- ========== DRAGGING ==========
+do
+	local drag, start, pos
+	connect(titleBar.InputBegan, function(i)
+		if i.UserInputType == Enum.UserInputType.MouseButton1 then
+			drag = true
+			start = i.Position
+			pos = main.Position
+		end
+	end)
+	connect(UIS.InputChanged, function(i)
+		if drag and i.UserInputType == Enum.UserInputType.MouseMovement then
+			local d = i.Position - start
+			-- keep the original scale; rebuilding it as 0 snapped the panel to the top
+			main.Position =
+				UDim2.new(pos.X.Scale, pos.X.Offset + d.X, pos.Y.Scale, pos.Y.Offset + d.Y)
+		end
+	end)
+	connect(UIS.InputEnded, function(i)
+		if i.UserInputType == Enum.UserInputType.MouseButton1 then
+			drag = false
+		end
+	end)
+end
+
+-- ========== KEYBINDS ==========
+-- wired last, after every toggle exists: K = hide/show, C = cframe speed, G = zero gravity
+connect(UIS.InputBegan, function(i, g)
+	if g or i.UserInputType ~= Enum.UserInputType.Keyboard then
+		return
+	end
+	if i.KeyCode == TOGGLE_KEY then
+		if keyChangeCooldown then
+			return
+		end
+		main.Visible = not main.Visible
+	elseif i.KeyCode == SPEED_KEY then
+		Speed.toggle()
+	elseif i.KeyCode == GRAV_KEY then
+		Grav.toggle()
+	end
+end)
+
+selectTab("Speed")
+
+-- restore the saved theme/settings, if any (after every tab exists so the UI can sync)
+pcall(hubLoadConfig)
+
+-- version tag (bottom-right) so you can tell which copy is running
+make("TextLabel", {
+	Size = UDim2.new(0, 60, 0, 12),
+	Position = UDim2.new(1, -66, 1, -25), -- centred on the same line as the cog/cmd bar
+	BackgroundTransparency = 1,
+	Font = Enum.Font.Gotham,
+	TextSize = 10,
+	TextColor3 = COL.sub,
+	Text = VERSION,
+	TextXAlignment = Enum.TextXAlignment.Right,
+}, main)
+
+-- unload button (just left of the version tag) — fully removes the script
+local unloadBtn = make("TextButton", {
+	Size = UDim2.new(0, 58, 0, 18),
+	Position = UDim2.new(1, -132, 1, -28), -- centred on the same line as the cog/cmd bar
+	BackgroundColor3 = COL.on,
+	Font = Enum.Font.GothamMedium,
+	TextSize = 11,
+	TextColor3 = Color3.new(1, 1, 1),
+	Text = "Unload",
+	AutoButtonColor = false,
+	BorderSizePixel = 0,
+}, main)
+round(unloadBtn, 5)
+connect(unloadBtn.MouseButton1Click, function()
+	click()
+	if _G.ScriptHubCleanup then
+		_G.ScriptHubCleanup()
+	end
+
+	local folder = workspace:FindFirstChild("InfBaseplate")
+
+	if folder then
+		folder:Destroy()
+	end
+end)
+
+connect(player.Chatted, function(msg)
+	if msg:sub(1, 1) ~= "!" then
+		return
+	end
+	-- single implementation: the command bar owns dispatch. (The old nested
+	-- connect(player.Chatted) in here registered a fresh handler per command,
+	-- so commands fired more times the longer you played.)
+	local ok, err = pcall(hubRunCommand, msg)
+	if not ok then
+		warn("[cmd] " .. tostring(err))
 	end
 end)
 
