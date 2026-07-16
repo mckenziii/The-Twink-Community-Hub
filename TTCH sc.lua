@@ -1427,15 +1427,6 @@ connect(player.Chatted, function(msg)
 
 		cmd = cmd:lower()
 
-		pcall(function()
-			game:GetService("StarterGui"):SetCore("SendNotification", {
-				Title = "Command",
-				Text = "Executed " .. cmd,
-				Duration = 2,
-			})
-		end)
-	end)
-
 	-- =========================
 	-- COMMAND BAR
 	-- =========================
