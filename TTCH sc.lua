@@ -3327,7 +3327,6 @@ connect(player.Chatted, function(msg)
 				Fly.doSfly(a)
 			end
 		end)
-
 		box:CaptureFocus()
 
 	-- =========================
