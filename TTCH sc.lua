@@ -1692,6 +1692,92 @@ world.applyFov = function()
 	end
 end
 
+-- Infinite baseplate: tiles a grid of anchored parts out to TARGET_RADIUS, matching the
+-- existing baseplate's height/material/colour when it can find one. Toggles: a second call
+-- tears the folder back down. The !infbaseplate chat command routes through here too.
+world.toggleInfBaseplate = function()
+	local existing = workspace:FindFirstChild("InfBaseplate")
+	if existing then
+		existing:Destroy()
+		return
+	end
+
+	local TILE_SIZE = 2048
+	local TARGET_RADIUS = 50000
+	local MAX_TILES_PER_AXIS = 25
+	local THICKNESS = 16
+
+	if _G.InfBaseplateCleanup then
+		pcall(_G.InfBaseplateCleanup)
+	end
+
+	local bp = workspace:FindFirstChild("Baseplate")
+		or workspace:FindFirstChild("Base")
+		or workspace:FindFirstChild("Ground")
+	if bp and not bp:IsA("BasePart") then
+		bp = nil
+	end
+
+	local floorY = 0
+	local mat = Enum.Material.Plastic
+	local col = Color3.fromRGB(110, 110, 110)
+
+	if bp then
+		floorY = bp.Position.Y + bp.Size.Y / 2 - THICKNESS / 2
+		mat = bp.Material
+		col = bp.Color
+	end
+
+	local n = math.min(math.ceil(TARGET_RADIUS / TILE_SIZE), MAX_TILES_PER_AXIS)
+
+	local folder = Instance.new("Folder")
+	folder.Name = "InfBaseplate"
+	folder.Parent = workspace
+
+	local parts = {}
+	local cf = {}
+	local index = 1
+
+	for x = -n, n do
+		for z = -n, n do
+			local p = Instance.new("Part")
+
+			p.Anchored = true
+			p.CanCollide = true
+			p.Size = Vector3.new(TILE_SIZE, THICKNESS, TILE_SIZE)
+
+			p.Material = mat
+			p.Color = col
+
+			p.TopSurface = Enum.SurfaceType.Smooth
+			p.BottomSurface = Enum.SurfaceType.Smooth
+
+			parts[index] = p
+			cf[index] = CFrame.new(x * TILE_SIZE, floorY, z * TILE_SIZE)
+
+			index += 1
+		end
+	end
+
+	-- parent after creation to reduce replication/update spam
+	for _, p in ipairs(parts) do
+		p.Parent = folder
+	end
+
+	-- move everything in one operation
+	workspace:BulkMoveTo(parts, cf, Enum.BulkMoveMode.FireCFrameChanged)
+
+	print(("[infbaseplate] %d tiles loaded (~%d studs)"):format(#parts, n * TILE_SIZE))
+
+	_G.InfBaseplateCleanup = function()
+		if folder then
+			folder:Destroy()
+		end
+
+		_G.InfBaseplateCleanup = nil
+	end
+end
+
 world.restore = function()
 	if world.orig then
 		world.fullbright, world.nofog = false, false
@@ -1744,6 +1830,23 @@ connect(world.fovBox.FocusLost, function()
 		world.applyFov()
 	end
 	world.fovBox.Text = tostring(world.fov)
+end)
+
+world.infBtn = make("TextButton", {
+	Size = UDim2.new(1, 0, 0, 24),
+	Position = UDim2.new(0, 0, 0, 104),
+	BackgroundColor3 = COL.accent,
+	Font = Enum.Font.GothamMedium,
+	TextSize = 13,
+	TextColor3 = Color3.new(1, 1, 1),
+	Text = "Infbaseplate",
+	AutoButtonColor = false,
+	BorderSizePixel = 0,
+}, world.page)
+round(world.infBtn, 6)
+connect(world.infBtn.MouseButton1Click, function()
+	click()
+	world.toggleInfBaseplate()
 end)
 
 -- ========== TOOLS TAB ==========
@@ -3242,99 +3345,7 @@ connect(player.Chatted, function(msg)
 			end
 		end
 	elseif cmd == "infbaseplate" or cmd == "infinitebaseplate" then
-		local folder = workspace:FindFirstChild("InfBaseplate")
-
-		if folder then
-			local folder = workspace:FindFirstChild("InfBaseplate")
-			if folder then
-				folder:Destroy()
-			end
-		else
-			-- infbaseplate optimized
-
-			local TILE_SIZE = 2048
-			local TARGET_RADIUS = 50000
-			local MAX_TILES_PER_AXIS = 25
-			local THICKNESS = 16
-
-			if _G.InfBaseplateCleanup then
-				pcall(_G.InfBaseplateCleanup)
-			end
-
-			local function findBaseplate()
-				local b = workspace:FindFirstChild("Baseplate")
-					or workspace:FindFirstChild("Base")
-					or workspace:FindFirstChild("Ground")
-
-				if b and b:IsA("BasePart") then
-					return b
-				end
-
-				return nil
-			end
-
-			local bp = findBaseplate()
-
-			local floorY = 0
-			local mat = Enum.Material.Plastic
-			local col = Color3.fromRGB(110, 110, 110)
-
-			if bp then
-				floorY = bp.Position.Y + bp.Size.Y / 2 - THICKNESS / 2
-				mat = bp.Material
-				col = bp.Color
-			end
-
-			local n = math.min(math.ceil(TARGET_RADIUS / TILE_SIZE), MAX_TILES_PER_AXIS)
-
-			local folder = Instance.new("Folder")
-			folder.Name = "InfBaseplate"
-			folder.Parent = workspace
-
-			local parts = {}
-			local cf = {}
-
-			local index = 1
-
-			for x = -n, n do
-				for z = -n, n do
-					local p = Instance.new("Part")
-
-					p.Anchored = true
-					p.CanCollide = true
-					p.Size = Vector3.new(TILE_SIZE, THICKNESS, TILE_SIZE)
-
-					p.Material = mat
-					p.Color = col
-
-					p.TopSurface = Enum.SurfaceType.Smooth
-					p.BottomSurface = Enum.SurfaceType.Smooth
-
-					parts[index] = p
-					cf[index] = CFrame.new(x * TILE_SIZE, floorY, z * TILE_SIZE)
-
-					index += 1
-				end
-			end
-
-			-- parent after creation to reduce replication/update spam
-			for _, p in ipairs(parts) do
-				p.Parent = folder
-			end
-
-			-- move everything in one operation
-			workspace:BulkMoveTo(parts, cf, Enum.BulkMoveMode.FireCFrameChanged)
-
-			print(("[infbaseplate] %d tiles loaded (~%d studs)"):format(#parts, n * TILE_SIZE))
-
-			_G.InfBaseplateCleanup = function()
-				if folder then
-					folder:Destroy()
-				end
-
-				_G.InfBaseplateCleanup = nil
-			end
-		end
+		world.toggleInfBaseplate()
 	elseif cmd == "clicktp" then
 		if _G.ClickTpCleanup then
 			pcall(_G.ClickTpCleanup)
