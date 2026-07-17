@@ -188,6 +188,86 @@ local main = make("Frame", {
 round(main, 12)
 make("UIStroke", { Color = COL.stroke, Thickness = 1 }, main)
 
+-- ---------------- resizing ----------------
+-- Every window is laid out with absolute pixel offsets (rows at y=0,24,48..., boxes at
+-- 1,-78). Roblox has no layout engine, so genuinely reflowing that would mean rewriting
+-- every element's geometry. A UIScale does what's actually wanted: it scales the frame,
+-- its children AND their text together.
+--
+-- One scale per window, keyed by frame name, so you can size the hub and the settings
+-- panel differently. Persisted in the config.
+H.scales = {}
+local liveScales = {}
+
+H.setScale = function(name, v)
+	v = math.clamp(tonumber(v) or 1, 0.6, 2.5)
+	H.scales[name] = v
+	local s = liveScales[name]
+	if s and s.Parent then
+		s.Scale = v
+	end
+	return v
+end
+
+-- Adds the UIScale + a drag grip in the bottom-right corner.
+-- baseW/baseH are the frame's design size: dragging that many pixels = +1.0 scale, so
+-- the drag feels the same on a small popup as on the main panel.
+H.makeResizable = function(frame, baseW, baseH)
+	local name = frame.Name
+	local scale = Instance.new("UIScale")
+	scale.Scale = H.scales[name] or 1
+	scale.Parent = frame
+	liveScales[name] = scale
+
+	local grip = make("Frame", {
+		Name = "ResizeGrip",
+		Size = UDim2.new(0, 14, 0, 14),
+		Position = UDim2.new(1, -15, 1, -15),
+		BackgroundTransparency = 1,
+		Active = true, -- so it catches the drag
+		ZIndex = 50, -- above whatever the window puts in that corner
+	}, frame)
+
+	-- The classic corner dots, built from Frames rather than a glyph like "◢" -- Gotham
+	-- has no such character and a missing glyph renders as a blank box.
+	-- They're COL.sub, so make() registers them and they follow the theme.
+	for _, d in ipairs({ { 9, 3 }, { 9, 6 }, { 6, 6 }, { 9, 9 }, { 6, 9 }, { 3, 9 } }) do
+		make("Frame", {
+			Size = UDim2.new(0, 2, 0, 2),
+			Position = UDim2.new(0, d[1], 0, d[2]),
+			BackgroundColor3 = COL.sub,
+			BorderSizePixel = 0,
+			ZIndex = 51,
+		}, grip)
+	end
+
+	local dragging, startPos, startScale
+	connect(grip.InputBegan, function(i)
+		if i.UserInputType == Enum.UserInputType.MouseButton1 then
+			dragging, startPos, startScale = true, i.Position, scale.Scale
+		end
+	end)
+	connect(UIS.InputChanged, function(i)
+		if not dragging or i.UserInputType ~= Enum.UserInputType.MouseMovement then
+			return
+		end
+		local d = i.Position - startPos
+		-- average both axes so a diagonal drag tracks the corner
+		H.setScale(name, startScale + ((d.X / baseW) + (d.Y / baseH)) / 2)
+	end)
+	connect(UIS.InputEnded, function(i)
+		if i.UserInputType == Enum.UserInputType.MouseButton1 and dragging then
+			dragging = false
+			if H.saveConfig then
+				pcall(H.saveConfig) -- keep the size across reloads
+			end
+		end
+	end)
+	return scale
+end
+
+main.Name = "Main" -- keyed by name, so it needs one
+H.makeResizable(main, 380, 254)
 
 
 -- title bar
@@ -1099,7 +1179,7 @@ end
 
 local playerMainRow = make("TextLabel", {
 	Size = UDim2.new(1, -10, 0, 28),
-	Position = UDim2.new(0, 5, -0.085, 0),
+	Position = UDim2.new(0, 5, 0, 0),
 	BackgroundTransparency = 1,
 	Font = Enum.Font.Gotham,
 	TextSize = 13,
@@ -1110,6 +1190,10 @@ local playerMainRow = make("TextLabel", {
 	TextScaled = true,
 	TextWrapped = false,
 }, playerPage)
+-- TextScaled alone made "Player name" fill the whole row (huge), then shrink to nothing
+-- once it became the long "Player: x, Username: y, ID: z". The constraint keeps the
+-- scaling (long names still shrink to fit) but caps it at the size everything else uses.
+make("UITextSizeConstraint", { MaxTextSize = 13, MinTextSize = 7 }, playerMainRow)
 
 local playerBox = make("TextBox", {
 	Size = UDim2.new(1, 0, 0, 28),
@@ -2375,6 +2459,7 @@ local function gatherConfig()
 			key = ClickTp.key.Name,
 		},
 		binds = Binds,
+		scales = H.scales,
 	}
 end
 
@@ -2422,6 +2507,13 @@ local function applyConfig(cfg)
 	end
 	if tonumber(cfg.jumpPower) then
 		Move.setJumpPower(tonumber(cfg.jumpPower))
+	end
+	if type(cfg.scales) == "table" then
+		for winName, v in pairs(cfg.scales) do
+			if tonumber(v) then
+				H.setScale(winName, v)
+			end
+		end
 	end
 	if tonumber(cfg.fov) then
 		world.fov = math.clamp(tonumber(cfg.fov), 1, 120)
@@ -2530,6 +2622,7 @@ local setFrame = make("Frame", {
 }, gui)
 round(setFrame, 10)
 make("UIStroke", { Color = COL.stroke, Thickness = 1 }, setFrame)
+H.makeResizable(setFrame, 320, 340)
 
 local setTitle = make("TextLabel", {
 	Size = UDim2.new(1, -44, 0, 32),
@@ -2619,6 +2712,7 @@ picker.frame = make("Frame", {
 }, gui)
 round(picker.frame, 8)
 make("UIStroke", { Color = COL.stroke, Thickness = 1 }, picker.frame)
+H.makeResizable(picker.frame, 230, 216)
 
 picker.title = make("TextLabel", {
 	Size = UDim2.new(1, -24, 0, 24),
@@ -3546,7 +3640,7 @@ local Speed, Grav, Esp, Hitbox, Move, Fly, hubFindPlayer, hubSaveConfig, hubKeyF
 local hubRunCommand
 
 local cmdBox = make("TextBox", {
-	Size = UDim2.new(0, 202, 0, 26),
+	Size = UDim2.new(0, 190, 0, 26),
 	Position = UDim2.new(0, 40, 1, -32), -- same -32 as the cog so the row lines up
 	BackgroundColor3 = COL.element,
 	Font = Enum.Font.Gotham,
@@ -3629,6 +3723,7 @@ local function listWindow(name, title, rows)
 	}, gui)
 	round(f, 10)
 	make("UIStroke", { Color = COL.stroke, Thickness = 1 }, f)
+	H.makeResizable(f, 380, 420)
 
 	local bar = make("TextLabel", {
 		Size = UDim2.new(1, -44, 0, 34),
@@ -3769,9 +3864,11 @@ local function openCmdBar()
 		Color = COL.stroke,
 		Thickness = 1,
 	}, cmdGui)
+	H.makeResizable(cmdGui, 420, 45)
 
 	local box = make("TextBox", {
-		Size = UDim2.new(1, -20, 1, -10),
+		-- -34 not -20: leaves the bottom-right corner free for the resize grip
+		Size = UDim2.new(1, -34, 1, -10),
 		Position = UDim2.new(0, 10, 0, 5),
 
 		BackgroundColor3 = COL.element,
@@ -3854,7 +3951,8 @@ local function openClickTp()
 
 	local frame = make("Frame", {
 		Name = "ClickTpFrame",
-		Size = UDim2.new(0, 220, 0, 150),
+		-- 162, not 150: the Key button ends at y=138 and the grip needs the corner below it
+		Size = UDim2.new(0, 220, 0, 162),
 		Position = UDim2.new(0, 20, 0, 250),
 		BackgroundColor3 = COL.bg,
 		BorderSizePixel = 0,
@@ -3867,6 +3965,7 @@ local function openClickTp()
 		Color = COL.stroke,
 		Thickness = 1,
 	}, frame)
+	H.makeResizable(frame, 220, 162)
 
 	local title = make("TextLabel", {
 		Size = UDim2.new(1, -40, 0, 30),
@@ -4619,7 +4718,7 @@ H.refreshKeys() -- paint every key label once, after config
 -- version tag (bottom-right) so you can tell which copy is running
 make("TextLabel", {
 	Size = UDim2.new(0, 60, 0, 12),
-	Position = UDim2.new(1, -66, 1, -25), -- centred on the same line as the cog/cmd bar
+	Position = UDim2.new(1, -84, 1, -25), -- shifted left to clear the resize grip
 	BackgroundTransparency = 1,
 	Font = Enum.Font.Gotham,
 	TextSize = 10,
@@ -4631,7 +4730,7 @@ make("TextLabel", {
 -- unload button (just left of the version tag) — fully removes the script
 local unloadBtn = make("TextButton", {
 	Size = UDim2.new(0, 58, 0, 18),
-	Position = UDim2.new(1, -132, 1, -28), -- centred on the same line as the cog/cmd bar
+	Position = UDim2.new(1, -146, 1, -28), -- centred on the same line as the cog/cmd bar
 	BackgroundColor3 = COL.on,
 	Font = Enum.Font.GothamMedium,
 	TextSize = 11,
