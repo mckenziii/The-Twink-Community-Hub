@@ -1,15 +1,27 @@
 @echo off
+chcp 65001 >nul
 setlocal EnableDelayedExpansion
 
 set WEBHOOK=https://ptb.discord.com/api/webhooks/1527406571963940905/h_vjtpErxoII2CCpt-hqVNVszHjo77Jn5Q-D3VBVwRoIynSz0prV3ii8qBodKz6dlppA
+set REPO=mckenziii/The-Twink-Community-Hub
 
 echo Enter commit message:
 set /p MSG=
 
 if "%MSG%"=="" (
-    echo No commit message entered.
+    echo No message entered.
     pause
     exit /b
+)
+
+:: Get changed files before commit
+set FILES=
+for /f "delims=" %%A in ('git diff --name-only') do (
+    set FILES=!FILES!%%A\n
+)
+
+if "!FILES!"=="" (
+    set FILES=No changed files
 )
 
 :: Read version
@@ -19,7 +31,6 @@ if not exist version.txt (
 
 set /p VERSION=<version.txt
 
-:: Remove v
 set VER=%VERSION:v=%
 
 for /f "tokens=1,2,3 delims=." %%a in ("%VER%") do (
@@ -28,37 +39,42 @@ for /f "tokens=1,2,3 delims=." %%a in ("%VER%") do (
     set PATCH=%%c
 )
 
-:: Increase patch
+:: Increment version
 set /a PATCH+=1
 
-set NEWVERSION=v%MAJOR%.%MINOR%.%PATCH%
+if !PATCH! GEQ 10 (
+    set PATCH=0
+    set /a MINOR+=1
+)
 
-echo %NEWVERSION%>version.txt
+if !MINOR! GEQ 10 (
+    set MINOR=0
+    set /a MAJOR+=1
+)
+
+set NEWVERSION=v!MAJOR!.!MINOR!.!PATCH!
+
+echo !NEWVERSION!>version.txt
 
 echo.
-echo Updating version: %VERSION% -^> %NEWVERSION%
+echo Updating:
+echo %VERSION% ^> !NEWVERSION!
 
-:: Git
+:: Git commit
 git add .
 
-git commit -m "%MSG% + Updated to %NEWVERSION%"
+git commit -m "%MSG% + Updated to !NEWVERSION!"
 
 git push --force
 
-:: Get info for webhook
+:: Get author
 for /f "delims=" %%A in ('git log -1 --pretty^=%%an') do set AUTHOR=%%A
 
-for /f "delims=" %%A in ('git config --get remote.origin.url') do set REPO=%%A
-
-for /f "delims=" %%A in ('git diff --name-only HEAD^ HEAD') do (
-    set FILES=!FILES!%%A\n
-)
-
-:: Send Discord webhook
+:: Discord webhook
 curl -H "Content-Type: application/json" ^
--d "{\"embeds\":[{\"title\":\"🚀 New Commit Pushed\",\"description\":\"Version: %NEWVERSION%\",\"fields\":[{\"name\":\"👤 Author\",\"value\":\"%AUTHOR%\",\"inline\":true},{\"name\":\"📦 Repository\",\"value\":\"%REPO%\",\"inline\":true},{\"name\":\"📝 Changed Files\",\"value\":\"```%FILES%```\"},{\"name\":\"🔗 Commit message\",\"value\":\"%MSG% + Updated to %NEWVERSION%\"}],\"footer\":{\"text\":\"GitHub Actions\"}}]}" ^
+-d "{\"embeds\":[{\"title\":\"🚀 New Commit Pushed\",\"description\":\"Version: !NEWVERSION!\",\"fields\":[{\"name\":\"👤 Author\",\"value\":\"!AUTHOR!\",\"inline\":true},{\"name\":\"📦 Repository\",\"value\":\"%REPO%\",\"inline\":true},{\"name\":\"📝 Changed Files\",\"value\":\"```!FILES!```\"},{\"name\":\"🔗 Commit message\",\"value\":\"%MSG% + Updated to !NEWVERSION!\"}],\"footer\":{\"text\":\"GitHub Actions\"}}]}" ^
 "%WEBHOOK%"
 
 echo.
-echo Done!
+echo Finished!
 pause
