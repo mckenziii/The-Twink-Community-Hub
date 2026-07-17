@@ -111,6 +111,8 @@ local ESPCOL = {
 	box = Color3.fromRGB(230, 68, 68),
 	name = Color3.fromRGB(255, 255, 255),
 	skeleton = Color3.fromRGB(230, 68, 68),
+	tracer = Color3.fromRGB(230, 68, 68),
+	chams = Color3.fromRGB(230, 68, 68),
 }
 
 -- Click TP settings live out here, not inside the !clicktp builder, so closing the window
@@ -804,13 +806,15 @@ end -- Gravity scope
 do
 -- pulled out of H once, so the body below uses fast locals
 local Players, RunService, player, connect, ESPCOL, row = H.Players, H.RunService, H.player, H.connect, H.ESPCOL, H.row
-local makeSwitch, espPage = H.makeSwitch, H.espPage
+local makeSwitch, espPage, make, COL = H.makeSwitch, H.espPage, H.make, H.COL
 
 local espEnabled = false
 local espBox = true
 local espDistance = false
 local espHealth = false
 local espSkeleton = false
+local espTracer = false
+local espChams = false
 local drawingOk = (Drawing ~= nil) -- Drawing is an executor feature; guard so the hub still loads without it
 local espObjects = {} -- [player] = { box, name, hpBg, hpFill, bones = {} }
 
@@ -842,11 +846,23 @@ local SKELETON_R15 = {
 }
 local SKELETON_POOL = 16 -- enough line drawings to cover an R15 rig
 
-row(espPage, 0, "Enabled")
-row(espPage, 24, "Distance")
-row(espPage, 48, "Health")
-row(espPage, 72, "Skeleton")
-row(espPage, 96, "Box")
+-- 7 toggles overflow the fixed page height, so host them in a scroll strip
+local espHost = make("ScrollingFrame", {
+	Size = UDim2.new(1, 0, 1, 0),
+	BackgroundTransparency = 1,
+	BorderSizePixel = 0,
+	ScrollBarThickness = 3,
+	ScrollBarImageColor3 = COL.sub,
+	CanvasSize = UDim2.new(0, 0, 0, 168),
+}, espPage)
+
+row(espHost, 0, "Enabled")
+row(espHost, 24, "Distance")
+row(espHost, 48, "Health")
+row(espHost, 72, "Skeleton")
+row(espHost, 96, "Box")
+row(espHost, 120, "Tracers")
+row(espHost, 144, "Chams")
 
 local function newDrawing(class, props)
 	local d = Drawing.new(class)
@@ -886,6 +902,8 @@ local function espAdd(plr)
 			{ Thickness = 1, Color = Color3.fromRGB(70, 210, 110), Filled = true, Visible = false }
 		),
 		bones = bones,
+		tracer = newDrawing("Line", { Thickness = 1, Color = ESPCOL.tracer, Visible = false }),
+		highlight = nil, -- Highlight instance, built lazily (needs a live character)
 	}
 end
 
@@ -901,6 +919,10 @@ local function espRemove(plr)
 	for _, ln in ipairs(o.bones) do
 		ln:Remove()
 	end
+	o.tracer:Remove()
+	if o.highlight then
+		o.highlight:Destroy()
+	end
 	espObjects[plr] = nil
 end
 
@@ -910,7 +932,7 @@ end
 connect(Players.PlayerAdded, espAdd)
 connect(Players.PlayerRemoving, espRemove)
 
-local toggleEspMain = select(2, makeSwitch(espPage, 0, false, function(on)
+local toggleEspMain = select(2, makeSwitch(espHost, 0, false, function(on)
 	espEnabled = on and drawingOk
 	if not espEnabled then
 		for _, o in pairs(espObjects) do
@@ -923,23 +945,43 @@ end))
 -- `esp <type>` command uses, so a command and a click behave identically
 local espSetters, espToggles = {}, {}
 
-espSetters.distance, espToggles.distance = makeSwitch(espPage, 24, espDistance, function(on)
+espSetters.distance, espToggles.distance = makeSwitch(espHost, 24, espDistance, function(on)
 	espDistance = on
 end)
 
-espSetters.health, espToggles.health = makeSwitch(espPage, 48, espHealth, function(on)
+espSetters.health, espToggles.health = makeSwitch(espHost, 48, espHealth, function(on)
 	espHealth = on
 end)
 
-espSetters.skeleton, espToggles.skeleton = makeSwitch(espPage, 72, espSkeleton, function(on)
+espSetters.skeleton, espToggles.skeleton = makeSwitch(espHost, 72, espSkeleton, function(on)
 	espSkeleton = on
 end)
 
-espSetters.box, espToggles.box = makeSwitch(espPage, 96, espBox, function(on)
+espSetters.box, espToggles.box = makeSwitch(espHost, 96, espBox, function(on)
 	espBox = on
 	if not on then
 		for _, o in pairs(espObjects) do
 			o.box.Visible = false
+		end
+	end
+end)
+
+espSetters.tracer, espToggles.tracer = makeSwitch(espHost, 120, espTracer, function(on)
+	espTracer = on
+	if not on then
+		for _, o in pairs(espObjects) do
+			o.tracer.Visible = false
+		end
+	end
+end)
+
+espSetters.chams, espToggles.chams = makeSwitch(espHost, 144, espChams, function(on)
+	espChams = on
+	if not on then
+		for _, o in pairs(espObjects) do
+			if o.highlight then
+				o.highlight.Enabled = false
+			end
 		end
 	end
 end)
@@ -1043,6 +1085,58 @@ connect(RunService.RenderStepped, function()
 	end
 end)
 
+-- tracers + chams get their own light loop so the main ESP draw above stays untouched.
+-- chams use a Highlight (not a Drawing): it follows the rig for free and needs no per-part maths.
+connect(RunService.RenderStepped, function()
+	if not espEnabled then
+		for _, o in pairs(espObjects) do
+			o.tracer.Visible = false
+			if o.highlight then
+				o.highlight.Enabled = false
+			end
+		end
+		return
+	end
+	local camera = workspace.CurrentCamera
+	local vp = camera.ViewportSize
+	for plr, o in pairs(espObjects) do
+		local ch = plr.Character
+		local root = ch and ch:FindFirstChild("HumanoidRootPart")
+		local hum = ch and ch:FindFirstChildOfClass("Humanoid")
+		local alive = root and hum and hum.Health > 0
+
+		if espTracer and alive then
+			local feet, onScreen = camera:WorldToViewportPoint(root.Position - Vector3.new(0, 3, 0))
+			if onScreen then
+				o.tracer.Color = ESPCOL.tracer
+				o.tracer.From = Vector2.new(vp.X / 2, vp.Y)
+				o.tracer.To = Vector2.new(feet.X, feet.Y)
+				o.tracer.Visible = true
+			else
+				o.tracer.Visible = false
+			end
+		else
+			o.tracer.Visible = false
+		end
+
+		if espChams and alive then
+			-- the old Highlight dies with the previous character, so rebuild if it's gone
+			if not (o.highlight and o.highlight.Parent == ch) then
+				o.highlight = Instance.new("Highlight")
+				o.highlight.DepthMode = Enum.HighlightDepthMode.AlwaysOnTop
+				o.highlight.FillTransparency = 0.5
+				o.highlight.OutlineTransparency = 0
+				o.highlight.Parent = ch
+			end
+			o.highlight.FillColor = ESPCOL.chams
+			o.highlight.OutlineColor = ESPCOL.name
+			o.highlight.Enabled = true
+		elseif o.highlight then
+			o.highlight.Enabled = false
+		end
+	end
+end)
+
 H.Esp = {
 	remove = espRemove,
 	objects = espObjects,
@@ -1062,10 +1156,10 @@ H.Esp = {
 			return nil
 		end
 		espToggles[name]()
-		return ({ box = espBox, distance = espDistance, health = espHealth, skeleton = espSkeleton })[name]
+		return ({ box = espBox, distance = espDistance, health = espHealth, skeleton = espSkeleton, tracer = espTracer, chams = espChams })[name]
 	end,
 	get = function()
-		return { box = espBox, distance = espDistance, health = espHealth, skeleton = espSkeleton }
+		return { box = espBox, distance = espDistance, health = espHealth, skeleton = espSkeleton, tracer = espTracer, chams = espChams }
 	end,
 	-- every field optional; ignore anything that isn't a real boolean
 	set = function(t)
@@ -1084,6 +1178,14 @@ H.Esp = {
 		if type(t.skeleton) == "boolean" then
 			espSkeleton = t.skeleton
 			espSetters.skeleton(espSkeleton)
+		end
+		if type(t.tracer) == "boolean" then
+			espTracer = t.tracer
+			espSetters.tracer(espTracer)
+		end
+		if type(t.chams) == "boolean" then
+			espChams = t.chams
+			espSetters.chams(espChams)
 		end
 	end,
 }
@@ -2430,6 +2532,8 @@ local COLOR_ROLES = {
 	{ key = "box", label = "ESP box", tbl = ESPCOL },
 	{ key = "name", label = "ESP name", tbl = ESPCOL },
 	{ key = "skeleton", label = "ESP skeleton", tbl = ESPCOL },
+	{ key = "tracer", label = "ESP tracer", tbl = ESPCOL },
+	{ key = "chams", label = "ESP chams", tbl = ESPCOL },
 }
 
 local function toHex(c)
@@ -3635,6 +3739,721 @@ H.saveConfig = saveConfig
 H.keyFromName = keyFromName
 end -- Settings scope
 
+-- ========== EXTRAS ==========
+-- airwalk, platform hover, hip height, anti-void, anti-fling, lock-FOV, invisibility,
+-- freecam, and the players / server-info windows. Scoped like every feature block; the
+-- command bar drives all of it through H.Extra. New windows go through window() so they
+-- inherit the theme and are draggable + resizable for free.
+do
+local RunService, UIS, player, connect, Players = H.RunService, H.UIS, H.player, H.connect, H.Players
+local COL, make, round, gui, makeSwitch = H.COL, H.make, H.round, H.gui, H.makeSwitch
+local click, world = H.click, H.world
+
+local Extra = {}
+
+-- character shortcuts
+local function getHRP()
+	local c = player.Character
+	return c and c:FindFirstChild("HumanoidRootPart")
+end
+local function getHum()
+	local c = player.Character
+	return c and c:FindFirstChildOfClass("Humanoid")
+end
+
+-- Shared themed window: titled frame + close X + a content area. Calling it a second time
+-- with a live window closes it (toggle), returning nil so callers bail. Otherwise returns
+-- (frame, body) where body is where you drop children.
+local function window(name, title, w, h)
+	if gui:FindFirstChild(name) then
+		gui[name]:Destroy()
+		return nil
+	end
+	local f = make("Frame", {
+		Name = name,
+		Size = UDim2.new(0, w, 0, h),
+		Position = UDim2.new(0.5, -w / 2, 0.5, -h / 2),
+		BackgroundColor3 = COL.bg,
+		BorderSizePixel = 0,
+		Active = true,
+	}, gui)
+	round(f, 10)
+	make("UIStroke", { Color = COL.stroke, Thickness = 1 }, f)
+	H.makeResizable(f, w, h)
+
+	local bar = make("TextLabel", {
+		Size = UDim2.new(1, -44, 0, 32),
+		Position = UDim2.new(0, 14, 0, 4),
+		BackgroundTransparency = 1,
+		Font = Enum.Font.GothamBold,
+		TextSize = 15,
+		TextColor3 = COL.text,
+		Text = title,
+		TextXAlignment = Enum.TextXAlignment.Left,
+	}, f)
+	bar.Active = true
+
+	local x = make("TextButton", {
+		Size = UDim2.new(0, 26, 0, 26),
+		Position = UDim2.new(1, -32, 0, 6),
+		BackgroundColor3 = COL.on,
+		Font = Enum.Font.GothamBold,
+		TextSize = 13,
+		TextColor3 = Color3.new(1, 1, 1),
+		Text = "X",
+		AutoButtonColor = false,
+		BorderSizePixel = 0,
+	}, f)
+	round(x, 6)
+	connect(x.MouseButton1Click, function()
+		click()
+		f:Destroy()
+	end)
+
+	local body = make("Frame", {
+		Size = UDim2.new(1, -20, 1, -46),
+		Position = UDim2.new(0, 10, 0, 40),
+		BackgroundTransparency = 1,
+		BorderSizePixel = 0,
+	}, f)
+
+	H.makeDraggable(f, bar)
+	return f, body
+end
+Extra.window = window
+
+-- ---------------- airwalk ----------------
+-- An invisible collidable pad kept under your feet, so you can stroll out over gaps.
+-- airOffset = how many studs below the HRP the pad sits; the GUI + up/down nudge it.
+local airOn = false
+local airOffset = 3
+local airPart
+local function airEnsure()
+	if airPart and airPart.Parent then
+		return
+	end
+	airPart = Instance.new("Part")
+	airPart.Name = "TwinkAirwalk"
+	airPart.Anchored = true
+	airPart.CanCollide = true
+	airPart.Size = Vector3.new(7, 1, 7)
+	airPart.Transparency = 1
+	airPart.Parent = workspace
+end
+local function airClear()
+	if airPart then
+		airPart:Destroy()
+		airPart = nil
+	end
+end
+Extra.airSet = function(on)
+	airOn = on
+	if not on then
+		airClear()
+	end
+	if Extra._syncAir then
+		Extra._syncAir(airOn)
+	end
+	return airOn
+end
+Extra.airToggle = function()
+	return Extra.airSet(not airOn)
+end
+Extra.airIsOn = function()
+	return airOn
+end
+Extra.airNudge = function(d)
+	airOffset = math.clamp(airOffset + d, -50, 50)
+	return airOffset
+end
+Extra.airSetOffset = function(v)
+	airOffset = math.clamp(tonumber(v) or airOffset, -50, 50)
+	return airOffset
+end
+connect(RunService.Heartbeat, function()
+	if not airOn then
+		return
+	end
+	local hrp = getHRP()
+	if not hrp then
+		return
+	end
+	airEnsure()
+	airPart.CFrame = CFrame.new(hrp.Position.X, hrp.Position.Y - airOffset - 0.5, hrp.Position.Z)
+end)
+
+-- ---------------- platform hover ----------------
+-- Cancels vertical velocity so you hang at your current height but can still walk around.
+local platOn = false
+local platBV
+local function platApply()
+	if platBV then
+		platBV:Destroy()
+		platBV = nil
+	end
+	if not platOn then
+		return
+	end
+	local hrp = getHRP()
+	if not hrp then
+		return
+	end
+	platBV = Instance.new("BodyVelocity")
+	platBV.Name = "TwinkHover"
+	platBV.MaxForce = Vector3.new(0, 4e5, 0) -- Y only: gravity is cancelled, walking still moves you
+	platBV.Velocity = Vector3.zero
+	platBV.Parent = hrp
+end
+Extra.platSet = function(on)
+	platOn = on
+	platApply()
+	return platOn
+end
+Extra.platToggle = function()
+	return Extra.platSet(not platOn)
+end
+Extra.platIsOn = function()
+	return platOn
+end
+
+-- ---------------- hip height ----------------
+local hipValue
+local function hipApply()
+	if not hipValue then
+		return
+	end
+	local hum = getHum()
+	if hum then
+		hum.HipHeight = hipValue
+	end
+end
+Extra.setHip = function(v)
+	hipValue = math.clamp(tonumber(v) or 0, 0, 100)
+	hipApply()
+	return hipValue
+end
+
+-- ---------------- anti-void ----------------
+local voidOn = false
+local lastSafe
+Extra.voidSet = function(on)
+	voidOn = on
+	return voidOn
+end
+Extra.voidToggle = function()
+	return Extra.voidSet(not voidOn)
+end
+Extra.voidIsOn = function()
+	return voidOn
+end
+connect(RunService.Heartbeat, function()
+	if not voidOn then
+		return
+	end
+	local hrp = getHRP()
+	local hum = getHum()
+	if not (hrp and hum) then
+		return
+	end
+	if hum.FloorMaterial ~= Enum.Material.Air then
+		lastSafe = hrp.CFrame -- remember the last spot we were actually standing on
+	end
+	if hrp.Position.Y < workspace.FallenPartsDestroyHeight + 50 and lastSafe then
+		hrp.CFrame = lastSafe + Vector3.new(0, 5, 0)
+		hrp.AssemblyLinearVelocity = Vector3.zero
+	end
+end)
+
+-- ---------------- anti-fling ----------------
+local flingOn = false
+Extra.antiflingSet = function(on)
+	flingOn = on
+	return flingOn
+end
+Extra.antiflingToggle = function()
+	return Extra.antiflingSet(not flingOn)
+end
+Extra.antiflingIsOn = function()
+	return flingOn
+end
+connect(RunService.Stepped, function()
+	if not flingOn then
+		return
+	end
+	local hrp = getHRP()
+	if not hrp then
+		return
+	end
+	-- flings work by pumping absurd spin/velocity into your root; clamp both back down
+	if hrp.AssemblyAngularVelocity.Magnitude > 30 then
+		hrp.AssemblyAngularVelocity = Vector3.zero
+	end
+	if hrp.AssemblyLinearVelocity.Magnitude > 120 then
+		hrp.AssemblyLinearVelocity = Vector3.new(0, hrp.AssemblyLinearVelocity.Y, 0)
+	end
+end)
+
+-- ---------------- lock FOV ----------------
+local lockFovOn = false
+Extra.lockFovSet = function(on)
+	lockFovOn = on
+	return lockFovOn
+end
+Extra.lockFovToggle = function()
+	return Extra.lockFovSet(not lockFovOn)
+end
+Extra.lockFovIsOn = function()
+	return lockFovOn
+end
+connect(RunService.RenderStepped, function()
+	if lockFovOn and workspace.CurrentCamera then
+		workspace.CurrentCamera.FieldOfView = world.fov
+	end
+end)
+
+-- ---------------- invisibility (client-side) ----------------
+-- Hides your own character on your screen via LocalTransparencyModifier. This never
+-- replicates, so it can't wedge your character; re-asserted each frame because tools
+-- and animations reset the modifier.
+local invisOn = false
+local function invisApply()
+	local c = player.Character
+	if not c then
+		return
+	end
+	for _, p in ipairs(c:GetDescendants()) do
+		if p:IsA("BasePart") or p:IsA("Decal") or p:IsA("Texture") then
+			p.LocalTransparencyModifier = invisOn and 1 or 0
+		end
+	end
+end
+Extra.invisSet = function(on)
+	invisOn = on
+	invisApply()
+	if Extra._syncInvis then
+		Extra._syncInvis(invisOn)
+	end
+	return invisOn
+end
+Extra.invisToggle = function()
+	return Extra.invisSet(not invisOn)
+end
+Extra.invisIsOn = function()
+	return invisOn
+end
+connect(RunService.RenderStepped, function()
+	if invisOn then
+		invisApply()
+	end
+end)
+
+-- ---------------- freecam ----------------
+local fcOn = false
+local fcPos = Vector3.zero
+local fcYaw, fcPitch = 0, 0
+local fcKeys = { W = false, A = false, S = false, D = false, E = false, Q = false, Shift = false }
+Extra.freecamSet = function(on)
+	fcOn = on
+	local cam = workspace.CurrentCamera
+	if on then
+		fcPos = cam.CFrame.Position
+		local look = cam.CFrame.LookVector
+		fcYaw = math.deg(math.atan2(-look.X, -look.Z))
+		fcPitch = math.deg(math.asin(math.clamp(look.Y, -1, 1)))
+		cam.CameraType = Enum.CameraType.Scriptable
+	else
+		cam.CameraType = Enum.CameraType.Custom
+		local hum = getHum()
+		if hum then
+			cam.CameraSubject = hum
+		end
+		UIS.MouseBehavior = Enum.MouseBehavior.Default
+		for k in pairs(fcKeys) do
+			fcKeys[k] = false
+		end
+	end
+	return fcOn
+end
+Extra.freecamToggle = function()
+	return Extra.freecamSet(not fcOn)
+end
+Extra.freecamIsOn = function()
+	return fcOn
+end
+connect(UIS.InputBegan, function(i, gp)
+	if gp or not fcOn then
+		return
+	end
+	if fcKeys[i.KeyCode.Name] ~= nil then
+		fcKeys[i.KeyCode.Name] = true
+	end
+	if i.KeyCode == Enum.KeyCode.LeftShift then
+		fcKeys.Shift = true
+	end
+end)
+connect(UIS.InputEnded, function(i)
+	if fcKeys[i.KeyCode.Name] ~= nil then
+		fcKeys[i.KeyCode.Name] = false
+	end
+	if i.KeyCode == Enum.KeyCode.LeftShift then
+		fcKeys.Shift = false
+	end
+end)
+connect(RunService.RenderStepped, function(dt)
+	if not fcOn then
+		return
+	end
+	local cam = workspace.CurrentCamera
+	UIS.MouseBehavior = Enum.MouseBehavior.LockCenter
+	local d = UIS:GetMouseDelta()
+	fcYaw = fcYaw - d.X * 0.3
+	fcPitch = math.clamp(fcPitch - d.Y * 0.3, -89, 89)
+	local rot = CFrame.fromEulerAnglesYXZ(math.rad(fcPitch), math.rad(fcYaw), 0)
+	local speed = (fcKeys.Shift and 4 or 1) * 60 * dt
+	local move = Vector3.zero
+	if fcKeys.W then move = move + rot.LookVector end
+	if fcKeys.S then move = move - rot.LookVector end
+	if fcKeys.D then move = move + rot.RightVector end
+	if fcKeys.A then move = move - rot.RightVector end
+	if fcKeys.E then move = move + Vector3.new(0, 1, 0) end
+	if fcKeys.Q then move = move - Vector3.new(0, 1, 0) end
+	if move.Magnitude > 0 then
+		fcPos = fcPos + move.Unit * speed
+	end
+	cam.CFrame = CFrame.new(fcPos) * rot
+end)
+
+-- ---------------- airwalk window ----------------
+Extra.openAirwalk = function()
+	local f, body = window("AirwalkUI", "Airwalk", 250, 180)
+	if not f then
+		return
+	end
+	make("TextLabel", {
+		Size = UDim2.new(1, -50, 0, 22),
+		Position = UDim2.new(0, 0, 0, 0),
+		BackgroundTransparency = 1,
+		Font = Enum.Font.GothamMedium,
+		TextSize = 13,
+		TextColor3 = COL.text,
+		Text = "Enabled",
+		TextXAlignment = Enum.TextXAlignment.Left,
+	}, body)
+	local airSetter = makeSwitch(body, 0, airOn, function(on)
+		Extra.airSet(on)
+	end)
+	Extra._syncAir = airSetter
+	connect(f.Destroying, function()
+		if Extra._syncAir == airSetter then
+			Extra._syncAir = nil
+		end
+	end)
+
+	make("TextLabel", {
+		Size = UDim2.new(0.6, 0, 0, 22),
+		Position = UDim2.new(0, 0, 0, 34),
+		BackgroundTransparency = 1,
+		Font = Enum.Font.Gotham,
+		TextSize = 13,
+		TextColor3 = COL.text,
+		Text = "Offset (studs)",
+		TextXAlignment = Enum.TextXAlignment.Left,
+	}, body)
+	local offBox = make("TextBox", {
+		Size = UDim2.new(0, 60, 0, 24),
+		Position = UDim2.new(1, -60, 0, 33),
+		BackgroundColor3 = COL.element,
+		Font = Enum.Font.Gotham,
+		TextSize = 13,
+		TextColor3 = COL.text,
+		Text = tostring(airOffset),
+		ClearTextOnFocus = false,
+		BorderSizePixel = 0,
+	}, body)
+	round(offBox, 6)
+	connect(offBox.FocusLost, function()
+		offBox.Text = tostring(Extra.airSetOffset(offBox.Text))
+	end)
+
+	local downBtn = make("TextButton", {
+		Size = UDim2.new(0.5, -4, 0, 26),
+		Position = UDim2.new(0, 0, 0, 66),
+		BackgroundColor3 = COL.element,
+		Font = Enum.Font.GothamMedium,
+		TextSize = 13,
+		TextColor3 = COL.text,
+		Text = "Down",
+		AutoButtonColor = false,
+		BorderSizePixel = 0,
+	}, body)
+	round(downBtn, 6)
+	local upBtn = make("TextButton", {
+		Size = UDim2.new(0.5, -4, 0, 26),
+		Position = UDim2.new(0.5, 4, 0, 66),
+		BackgroundColor3 = COL.element,
+		Font = Enum.Font.GothamMedium,
+		TextSize = 13,
+		TextColor3 = COL.text,
+		Text = "Up",
+		AutoButtonColor = false,
+		BorderSizePixel = 0,
+	}, body)
+	round(upBtn, 6)
+	connect(downBtn.MouseButton1Click, function()
+		click()
+		offBox.Text = tostring(Extra.airNudge(1)) -- lower the pad, you descend
+	end)
+	connect(upBtn.MouseButton1Click, function()
+		click()
+		offBox.Text = tostring(Extra.airNudge(-1))
+	end)
+
+	local keyBtn = make("TextButton", {
+		Size = UDim2.new(1, 0, 0, 26),
+		Position = UDim2.new(0, 0, 0, 100),
+		BackgroundColor3 = COL.accent,
+		Font = Enum.Font.GothamMedium,
+		TextSize = 12,
+		TextColor3 = Color3.new(1, 1, 1),
+		Text = "Toggle key: " .. H.keyFor("airwalk"),
+		AutoButtonColor = false,
+		BorderSizePixel = 0,
+	}, body)
+	round(keyBtn, 6)
+	local waiting, cap = false, nil
+	connect(keyBtn.MouseButton1Click, function()
+		click()
+		if waiting then
+			return
+		end
+		waiting = true
+		keyBtn.Text = "press a key..."
+		cap = UIS.InputBegan:Connect(function(inp, gp)
+			if gp then
+				return
+			end
+			if inp.UserInputType == Enum.UserInputType.Keyboard then
+				H.setBind("airwalk", inp.KeyCode.Name) -- routes through the hub's bind system
+				waiting = false
+				keyBtn.Text = "Toggle key: " .. H.keyFor("airwalk")
+				cap:Disconnect()
+			end
+		end)
+	end)
+	connect(f.Destroying, function()
+		if cap then
+			cap:Disconnect()
+		end
+	end)
+end
+
+-- ---------------- invisibility window ----------------
+Extra.openInvis = function()
+	local f, body = window("InvisUI", "Invisible", 250, 120)
+	if not f then
+		return
+	end
+	make("TextLabel", {
+		Size = UDim2.new(1, 0, 0, 32),
+		Position = UDim2.new(0, 0, 0, 0),
+		BackgroundTransparency = 1,
+		Font = Enum.Font.Gotham,
+		TextSize = 12,
+		TextColor3 = COL.sub,
+		Text = "Client-side: hides you on your own screen.",
+		TextWrapped = true,
+		TextXAlignment = Enum.TextXAlignment.Left,
+		TextYAlignment = Enum.TextYAlignment.Top,
+	}, body)
+	make("TextLabel", {
+		Size = UDim2.new(1, -50, 0, 22),
+		Position = UDim2.new(0, 0, 0, 40),
+		BackgroundTransparency = 1,
+		Font = Enum.Font.GothamMedium,
+		TextSize = 13,
+		TextColor3 = COL.text,
+		Text = "Invisible",
+		TextXAlignment = Enum.TextXAlignment.Left,
+	}, body)
+	local setSw = makeSwitch(body, 40, invisOn, function(on)
+		Extra.invisSet(on)
+	end)
+	Extra._syncInvis = setSw
+	connect(f.Destroying, function()
+		if Extra._syncInvis == setSw then
+			Extra._syncInvis = nil
+		end
+	end)
+end
+
+-- ---------------- players window ----------------
+Extra.openPlayers = function()
+	local f, body = window("PlayersUI", "Players", 340, 380)
+	if not f then
+		return
+	end
+	local sc = make("ScrollingFrame", {
+		Size = UDim2.new(1, 0, 1, 0),
+		BackgroundTransparency = 1,
+		BorderSizePixel = 0,
+		ScrollBarThickness = 4,
+		ScrollBarImageColor3 = COL.sub,
+		CanvasSize = UDim2.new(0, 0, 0, 0),
+	}, body)
+	local layout = make("UIListLayout", {
+		Padding = UDim.new(0, 6),
+		SortOrder = Enum.SortOrder.LayoutOrder,
+	}, sc)
+
+	local function addRow(p, i)
+		local rf = make("Frame", {
+			Size = UDim2.new(1, -6, 0, 54),
+			BackgroundColor3 = COL.element,
+			BorderSizePixel = 0,
+			LayoutOrder = i,
+		}, sc)
+		round(rf, 6)
+		make("TextLabel", {
+			Size = UDim2.new(1, -12, 0, 18),
+			Position = UDim2.new(0, 8, 0, 4),
+			BackgroundTransparency = 1,
+			Font = Enum.Font.GothamMedium,
+			TextSize = 13,
+			TextColor3 = COL.text,
+			Text = p.DisplayName .. "  (@" .. p.Name .. ")",
+			TextXAlignment = Enum.TextXAlignment.Left,
+			TextTruncate = Enum.TextTruncate.AtEnd,
+		}, rf)
+		make("TextLabel", {
+			Size = UDim2.new(1, -12, 0, 14),
+			Position = UDim2.new(0, 8, 0, 22),
+			BackgroundTransparency = 1,
+			Font = Enum.Font.Gotham,
+			TextSize = 11,
+			TextColor3 = COL.sub,
+			Text = "ID " .. p.UserId,
+			TextXAlignment = Enum.TextXAlignment.Left,
+		}, rf)
+		local function mini(text, xoff, col, fn)
+			local b = make("TextButton", {
+				Size = UDim2.new(0, 62, 0, 20),
+				Position = UDim2.new(0, xoff, 1, -24),
+				BackgroundColor3 = col,
+				Font = Enum.Font.GothamMedium,
+				TextSize = 11,
+				TextColor3 = Color3.new(1, 1, 1),
+				Text = text,
+				AutoButtonColor = false,
+				BorderSizePixel = 0,
+			}, rf)
+			round(b, 5)
+			connect(b.MouseButton1Click, function()
+				click()
+				fn()
+			end)
+		end
+		mini("TP", 8, COL.accent, function()
+			local thrp = p.Character and p.Character:FindFirstChild("HumanoidRootPart")
+			local myhrp = getHRP()
+			if thrp and myhrp then
+				myhrp.CFrame = thrp.CFrame + Vector3.new(0, 0, 3)
+			end
+		end)
+		mini("Spectate", 76, COL.accent, function()
+			local thum = p.Character and p.Character:FindFirstChildOfClass("Humanoid")
+			if thum then
+				workspace.CurrentCamera.CameraSubject = thum
+			end
+		end)
+		mini("Copy ID", 150, COL.stroke, function()
+			if setclipboard then
+				setclipboard(tostring(p.UserId))
+			end
+		end)
+	end
+
+	for i, p in ipairs(Players:GetPlayers()) do
+		addRow(p, i)
+	end
+	local function sz()
+		sc.CanvasSize = UDim2.new(0, 0, 0, layout.AbsoluteContentSize.Y + 6)
+	end
+	connect(layout:GetPropertyChangedSignal("AbsoluteContentSize"), sz)
+	sz()
+end
+
+-- ---------------- server info window ----------------
+Extra.openServerInfo = function()
+	local f, body = window("ServerInfoUI", "Server Info", 300, 210)
+	if not f then
+		return
+	end
+	local info = {
+		{ "Place ID", tostring(game.PlaceId) },
+		{ "Job ID", tostring(game.JobId) },
+		{ "Players", #Players:GetPlayers() .. " / " .. Players.MaxPlayers },
+		{ "Your ID", tostring(player.UserId) },
+		{ "Ping", math.floor(player:GetNetworkPing() * 1000 + 0.5) .. " ms" },
+	}
+	for i, kv in ipairs(info) do
+		make("TextLabel", {
+			Size = UDim2.new(0.4, 0, 0, 22),
+			Position = UDim2.new(0, 0, 0, (i - 1) * 26),
+			BackgroundTransparency = 1,
+			Font = Enum.Font.GothamMedium,
+			TextSize = 13,
+			TextColor3 = COL.sub,
+			Text = kv[1],
+			TextXAlignment = Enum.TextXAlignment.Left,
+		}, body)
+		make("TextLabel", {
+			Size = UDim2.new(0.6, 0, 0, 22),
+			Position = UDim2.new(0.4, 0, 0, (i - 1) * 26),
+			BackgroundTransparency = 1,
+			Font = Enum.Font.Gotham,
+			TextSize = 13,
+			TextColor3 = COL.text,
+			Text = kv[2],
+			TextXAlignment = Enum.TextXAlignment.Left,
+			TextTruncate = Enum.TextTruncate.AtEnd,
+		}, body)
+	end
+	local copyBtn = make("TextButton", {
+		Size = UDim2.new(1, 0, 0, 26),
+		Position = UDim2.new(0, 0, 0, 5 * 26 + 6),
+		BackgroundColor3 = COL.accent,
+		Font = Enum.Font.GothamMedium,
+		TextSize = 12,
+		TextColor3 = Color3.new(1, 1, 1),
+		Text = "Copy Job ID",
+		AutoButtonColor = false,
+		BorderSizePixel = 0,
+	}, body)
+	round(copyBtn, 6)
+	connect(copyBtn.MouseButton1Click, function()
+		click()
+		if setclipboard then
+			setclipboard(tostring(game.JobId))
+		end
+	end)
+end
+
+-- re-apply the per-character states after a respawn (a fresh Humanoid drops our values)
+connect(player.CharacterAdded, function(c)
+	c:WaitForChild("Humanoid")
+	task.wait(0.2)
+	hipApply()
+	if platOn then
+		platApply()
+	end
+	if invisOn then
+		invisApply()
+	end
+end)
+
+H.Extra = Extra
+end -- Extras scope
+
 -- ========== COMMAND BAR ==========
 -- Inline bar in the bottom strip, sat between the cog (ends x=34) and Unload (starts x=248).
 -- hubRunCommand is THE command implementation: this bar, the !cmdbar popup and
@@ -3646,6 +4465,7 @@ local Players, UIS, player, connect, COL, ClickTp = H.Players, H.UIS, H.player, 
 local Binds, make, round, gui, click, main = H.Binds, H.make, H.round, H.gui, H.click, H.main
 local world = H.world
 local Speed, Grav, Esp, Hitbox, Move, Fly, hubFindPlayer, hubSaveConfig, hubKeyFromName = H.Speed, H.Grav, H.Esp, H.Hitbox, H.Move, H.Fly, H.findPlayer, H.saveConfig, H.keyFromName
+local Extra = H.Extra
 local hubRunCommand
 
 local cmdBox = make("TextBox", {
@@ -3685,7 +4505,7 @@ end
 --     name  = "noclip",              -- what you type
 --     alias = { "nc" },              -- optional extra names
 --     args  = "<n>",                 -- optional, shown in help only
---     group = "Toggles",             -- help section heading
+--     group = "Movement",            -- help section heading (see GROUP_ORDER)
 --     help  = "Walk through walls",  -- one-line description
 --     bindable = true,               -- offer it in `bind help`
 --     run = function(c) ... end,     -- c.arg = text after the name, c.n = that as a number
@@ -3806,14 +4626,36 @@ local function listWindow(name, title, rows)
 end
 
 -- ---------------- generated windows ----------------
+-- Sections render in this order; anything with an unlisted group is appended after.
+-- Bucketing by group means add{} order no longer has to be sorted for clean headers.
+local GROUP_ORDER = {
+	"Movement", "Combat", "Visuals", "World", "Camera",
+	"Players", "Self", "Server", "Chat", "Binds", "Scripts", "Hub",
+}
+
 local function openHelp()
-	local rows, lastGroup = {}, nil
-	for _, s in ipairs(ORDER) do
-		if s.group ~= lastGroup then
-			lastGroup = s.group
-			rows[#rows + 1] = { text = string.upper(s.group), header = true }
+	local rows = {}
+	local seen = {}
+	local function emit(group)
+		local first = true
+		for _, s in ipairs(ORDER) do
+			if s.group == group then
+				if first then
+					rows[#rows + 1] = { text = string.upper(group), header = true }
+					first = false
+				end
+				rows[#rows + 1] = { text = "!" .. signature(s) .. "   -   " .. s.help }
+			end
 		end
-		rows[#rows + 1] = { text = "!" .. signature(s) .. "   -   " .. s.help }
+		seen[group] = true
+	end
+	for _, g in ipairs(GROUP_ORDER) do
+		emit(g)
+	end
+	for _, s in ipairs(ORDER) do
+		if not seen[s.group] then
+			emit(s.group)
+		end
 	end
 	listWindow("HelpUI", "Twink Hub Commands", rows)
 end
@@ -4123,7 +4965,7 @@ add{
 	name = "fly",
 	alias = { "sfly" },
 	args = "<speed>",
-	group = "Toggles",
+	group = "Movement",
 	help = "Fly. A number sets the speed",
 	bindable = true,
 	run = function(c)
@@ -4134,7 +4976,7 @@ add{
 	name = "cframe",
 	alias = { "speed" },
 	args = "<speed>",
-	group = "Toggles",
+	group = "Movement",
 	help = "CFrame movement. A number sets the speed",
 	bindable = true,
 	run = function(c)
@@ -4151,7 +4993,7 @@ add{
 	name = "gravity",
 	alias = { "grav" },
 	args = "<n>",
-	group = "Toggles",
+	group = "World",
 	help = "Custom gravity. A number sets the value",
 	bindable = true,
 	run = function(c)
@@ -4165,7 +5007,7 @@ add{
 }
 add{
 	name = "noclip",
-	group = "Toggles",
+	group = "Movement",
 	help = "Walk through walls",
 	bindable = true,
 	run = function()
@@ -4175,7 +5017,7 @@ add{
 }
 add{
 	name = "infjump",
-	group = "Toggles",
+	group = "Movement",
 	help = "Jump again in mid-air, forever",
 	bindable = true,
 	run = function()
@@ -4186,7 +5028,7 @@ add{
 add{
 	name = "spin",
 	args = "<speed>",
-	group = "Toggles",
+	group = "Movement",
 	help = "Spin your character. A number sets the speed",
 	bindable = true,
 	run = function(c)
@@ -4196,8 +5038,8 @@ add{
 }
 add{
 	name = "esp",
-	args = "<box|skeleton|health|distance>",
-	group = "Toggles",
+	args = "<box|skeleton|health|distance|tracer|chams>",
+	group = "Visuals",
 	help = "Master ESP, or one type with an argument",
 	bindable = true,
 	run = function(c)
@@ -4210,7 +5052,7 @@ add{
 		end
 		local state = Esp.toggleType(c.arg:lower())
 		if state == nil then
-			return "esp: box | skeleton | health | distance"
+			return "esp: box | skeleton | health | distance | tracer | chams"
 		end
 		return "esp " .. c.arg:lower() .. " " .. onoff(state)
 	end,
@@ -4218,7 +5060,7 @@ add{
 add{
 	name = "fullbright",
 	alias = { "fb" },
-	group = "Toggles",
+	group = "World",
 	help = "Remove all darkness",
 	bindable = true,
 	run = function()
@@ -4228,7 +5070,7 @@ add{
 }
 add{
 	name = "nofog",
-	group = "Toggles",
+	group = "World",
 	help = "Remove fog",
 	bindable = true,
 	run = function()
@@ -4238,7 +5080,7 @@ add{
 }
 add{
 	name = "xray",
-	group = "Toggles",
+	group = "Visuals",
 	help = "See through the map",
 	bindable = true,
 	run = function()
@@ -4249,7 +5091,7 @@ add{
 add{
 	name = "infbaseplate",
 	alias = { "infinitebaseplate" },
-	group = "Toggles",
+	group = "World",
 	help = "Infinite baseplate",
 	bindable = true,
 	run = function()
@@ -4258,7 +5100,7 @@ add{
 }
 add{
 	name = "menu",
-	group = "Toggles",
+	group = "Hub",
 	help = "Show / hide the hub",
 	bindable = true,
 	run = function()
@@ -4271,7 +5113,7 @@ add{
 	name = "ws",
 	alias = { "walkspeed" },
 	args = "<n>",
-	group = "Values",
+	group = "Movement",
 	help = "Walk speed (0-500)",
 	run = function(c)
 		if not c.n then
@@ -4285,7 +5127,7 @@ add{
 	name = "jp",
 	alias = { "jumppower" },
 	args = "<n>",
-	group = "Values",
+	group = "Movement",
 	help = "Jump power (0-500)",
 	run = function(c)
 		if not c.n then
@@ -4297,12 +5139,18 @@ add{
 }
 add{
 	name = "fov",
-	args = "<n>",
-	group = "Values",
-	help = "Field of view (1-120)",
+	args = "<n|reset>",
+	group = "Camera",
+	help = "Field of view (1-120), or reset",
 	run = function(c)
+		if c.arg:lower() == "reset" or c.arg == "" then
+			world.fov = 70
+			world.fovBox.Text = "70"
+			world.applyFov()
+			return "fov reset"
+		end
 		if not c.n then
-			return "needs a number"
+			return "needs a number or 'reset'"
 		end
 		world.fov = math.clamp(c.n, 1, 120)
 		world.fovBox.Text = tostring(world.fov)
@@ -4313,7 +5161,7 @@ add{
 add{
 	name = "hitbox",
 	args = "<n>",
-	group = "Values",
+	group = "Combat",
 	help = "Hitbox size (1-10)",
 	run = function(c)
 		if not c.n then
@@ -4326,7 +5174,7 @@ add{
 add{
 	name = "brightness",
 	args = "<n>",
-	group = "Values",
+	group = "World",
 	help = "Lighting brightness (0-10)",
 	run = function(c)
 		if not c.n then
@@ -4338,7 +5186,7 @@ add{
 add{
 	name = "time",
 	args = "<0-24>",
-	group = "Values",
+	group = "World",
 	help = "Time of day, 24hr clock",
 	run = function(c)
 		if not c.n then
@@ -4351,6 +5199,7 @@ add{
 -- ---------------- players ----------------
 add{
 	name = "tp",
+	alias = { "goto" },
 	args = "<player>",
 	group = "Players",
 	help = "Teleport to a player",
@@ -4465,7 +5314,7 @@ add{
 add{
 	name = "reset",
 	alias = { "respawn" },
-	group = "Other",
+	group = "Self",
 	help = "Respawn your character",
 	bindable = true,
 	run = function()
@@ -4480,7 +5329,7 @@ add{
 add{
 	name = "print",
 	args = "<text>",
-	group = "Other",
+	group = "Scripts",
 	help = "Echo text back in the bar",
 	run = function(c)
 		if c.arg == "" then
@@ -4493,7 +5342,7 @@ add{
 add{
     name = "antivc",
 	alias = { "antivcb", "vcbypass" },
-    group = "Other",
+    group = "Scripts",
     help = "Load the anti-VC script",
     run = function()
         if not loadstring then
@@ -4511,7 +5360,7 @@ add{
 }
 add{
 	name = "rejoin",
-	group = "Other",
+	group = "Server",
 	help = "Rejoin the same server",
 	bindable = true,
 	run = function()
@@ -4530,7 +5379,7 @@ add{
 	name = "runcode",
 	alias = { "lua" },
 	args = "<code>",
-	group = "Other",
+	group = "Scripts",
 	help = "Execute Lua",
 	run = function(c)
 		if c.arg == "" then
@@ -4546,27 +5395,575 @@ add{
 }
 add{
 	name = "cmdbar",
-	group = "Other",
+	group = "Scripts",
 	help = "Open the floating command bar",
 	bindable = true,
 	run = openCmdBar,
 }
 add{
 	name = "help",
-	group = "Other",
+	group = "Scripts",
 	help = "Open this menu",
 	bindable = true,
 	run = openHelp,
 }
 add{
 	name = "unload",
-	group = "Other",
+	group = "Server",
 	help = "Remove the hub",
 	bindable = true,
 	run = function()
 		if _G.ScriptHubCleanup then
 			_G.ScriptHubCleanup()
 		end
+	end,
+}
+
+-- ---------------- new command helpers ----------------
+-- executor loader: fetch a URL and run it, reporting failures the way the Tools tab does
+local function loadUrl(url)
+	if not loadstring then
+		return "no loadstring"
+	end
+	local ok, err = pcall(function()
+		loadstring(game:HttpGet(url))()
+	end)
+	return ok and "loaded" or ("failed: " .. tostring(err))
+end
+
+-- send to whichever chat system the game runs (new TextChatService or legacy)
+local function sendChat(msg)
+	local TCS = game:GetService("TextChatService")
+	if TCS.ChatVersion == Enum.ChatVersion.TextChatService then
+		local channels = TCS:FindFirstChild("TextChannels")
+		local ch = channels and channels:FindFirstChild("RBXGeneral")
+		if ch then
+			ch:SendAsync(msg)
+			return true
+		end
+		return false
+	end
+	local ev = game:GetService("ReplicatedStorage"):FindFirstChild("DefaultChatSystemChatEvents")
+	local say = ev and ev:FindFirstChild("SayMessageRequest")
+	if say then
+		say:FireServer(msg, "All")
+		return true
+	end
+	return false
+end
+
+-- pull the public server list and teleport to another instance; wantSmall picks the emptiest
+local function hopTo(wantSmall)
+	local TS = game:GetService("TeleportService")
+	local HS = game:GetService("HttpService")
+	local ok, data = pcall(function()
+		return HS:JSONDecode(game:HttpGet(
+			"https://games.roblox.com/v1/games/" .. game.PlaceId .. "/servers/Public?sortOrder=Asc&limit=100"
+		))
+	end)
+	if not ok or type(data) ~= "table" or type(data.data) ~= "table" then
+		return "server list unavailable"
+	end
+	local best
+	for _, s in ipairs(data.data) do
+		if s.id ~= game.JobId and s.playing and s.maxPlayers and s.playing < s.maxPlayers then
+			if wantSmall then
+				if not best or s.playing < best.playing then
+					best = s
+				end
+			else
+				best = s
+				break
+			end
+		end
+	end
+	if not best then
+		return "no other servers found"
+	end
+	pcall(function()
+		TS:TeleportToPlaceInstance(game.PlaceId, best.id, player)
+	end)
+	return "teleporting..."
+end
+
+-- classic velocity fling (FE-limited, troll): overlaps the target and pumps velocity for a beat
+local function doFling(target)
+	local myhrp = player.Character and player.Character:FindFirstChild("HumanoidRootPart")
+	local thrp = target and target.Character and target.Character:FindFirstChild("HumanoidRootPart")
+	if not (myhrp and thrp) then
+		return "player not found"
+	end
+	local start = tick()
+	local conn
+	conn = H.RunService.Heartbeat:Connect(function()
+		if tick() - start > 0.6 or not thrp.Parent then
+			conn:Disconnect()
+			return
+		end
+		myhrp.CFrame = thrp.CFrame
+		myhrp.AssemblyLinearVelocity = Vector3.new(1, 1, 1) * 9e4
+		myhrp.AssemblyAngularVelocity = Vector3.new(1, 1, 1) * 9e4
+	end)
+	return "flinging " .. target.Name
+end
+
+-- ---------------- Movement ----------------
+add{
+	name = "airwalk",
+	args = "<offset>",
+	group = "Movement",
+	help = "Walk on air. A number sets the drop below your feet",
+	bindable = true,
+	run = function(c)
+		if c.n then
+			Extra.airSetOffset(c.n)
+			if not Extra.airIsOn() then
+				Extra.airSet(true)
+			end
+			return "airwalk offset " .. c.n
+		end
+		Extra.airToggle()
+		return "airwalk " .. onoff(Extra.airIsOn())
+	end,
+}
+add{
+	name = "airwalkgui",
+	alias = { "awgui" },
+	group = "Movement",
+	help = "Open the airwalk window (toggle, offset, keybind)",
+	run = function()
+		Extra.openAirwalk()
+	end,
+}
+add{
+	name = "platform",
+	alias = { "hover" },
+	group = "Movement",
+	help = "Hang at your current height, don't fall",
+	bindable = true,
+	run = function()
+		Extra.platToggle()
+		return "platform hover " .. onoff(Extra.platIsOn())
+	end,
+}
+add{
+	name = "hipheight",
+	alias = { "hip" },
+	args = "<n>",
+	group = "Movement",
+	help = "Float this many studs above the ground",
+	run = function(c)
+		if not c.n then
+			return "needs a number"
+		end
+		return "hip height " .. Extra.setHip(c.n)
+	end,
+}
+add{
+	name = "antivoid",
+	group = "Movement",
+	help = "Teleport back up if you fall out of the map",
+	bindable = true,
+	run = function()
+		Extra.voidToggle()
+		return "anti-void " .. onoff(Extra.voidIsOn())
+	end,
+}
+
+-- ---------------- World ----------------
+add{
+	name = "day",
+	group = "World",
+	help = "Set the time to midday",
+	bindable = true,
+	run = function()
+		return "time " .. world.setTime(14)
+	end,
+}
+add{
+	name = "night",
+	group = "World",
+	help = "Set the time to midnight",
+	bindable = true,
+	run = function()
+		return "time " .. world.setTime(0)
+	end,
+}
+add{
+	name = "ambient",
+	args = "<RRGGBB>",
+	group = "World",
+	help = "Set the ambient light colour",
+	run = function(c)
+		local hex = (c.arg or ""):gsub("#", ""):gsub("%s", "")
+		if #hex ~= 6 or hex:match("%X") then
+			return "usage: ambient RRGGBB"
+		end
+		local r, g, b = tonumber(hex:sub(1, 2), 16), tonumber(hex:sub(3, 4), 16), tonumber(hex:sub(5, 6), 16)
+		local L = game:GetService("Lighting")
+		local col = Color3.fromRGB(r, g, b)
+		L.Ambient = col
+		L.OutdoorAmbient = col
+		return "ambient set"
+	end,
+}
+
+-- ---------------- Camera ----------------
+add{
+	name = "freecam",
+	alias = { "fc" },
+	group = "Camera",
+	help = "Detached free camera (WASD, E/Q up-down, Shift faster)",
+	bindable = true,
+	run = function()
+		Extra.freecamToggle()
+		return "freecam " .. onoff(Extra.freecamIsOn())
+	end,
+}
+add{
+	name = "firstperson",
+	alias = { "fp" },
+	group = "Camera",
+	help = "Lock to first person",
+	bindable = true,
+	run = function()
+		player.CameraMode = Enum.CameraMode.LockFirstPerson
+		return "first person"
+	end,
+}
+add{
+	name = "thirdperson",
+	alias = { "tp3" },
+	group = "Camera",
+	help = "Unlock third person and max the zoom",
+	bindable = true,
+	run = function()
+		player.CameraMode = Enum.CameraMode.Classic
+		player.CameraMaxZoomDistance = 128
+		return "third person"
+	end,
+}
+add{
+	name = "fixcam",
+	group = "Camera",
+	help = "Reset the camera to normal",
+	bindable = true,
+	run = function()
+		local cam = workspace.CurrentCamera
+		cam.CameraType = Enum.CameraType.Custom
+		local hum = player.Character and player.Character:FindFirstChildOfClass("Humanoid")
+		if hum then
+			cam.CameraSubject = hum
+		end
+		return "camera reset"
+	end,
+}
+add{
+	name = "lockfov",
+	group = "Camera",
+	help = "Hold the FOV against game changes",
+	bindable = true,
+	run = function()
+		Extra.lockFovToggle()
+		return "lock fov " .. onoff(Extra.lockFovIsOn())
+	end,
+}
+
+-- ---------------- Players ----------------
+add{
+	name = "tppos",
+	args = "<x,y,z>",
+	group = "Players",
+	help = "Teleport to raw coordinates",
+	run = function(c)
+		local x, y, z = c.arg:match("(-?%d+%.?%d*)[, ]+(-?%d+%.?%d*)[, ]+(-?%d+%.?%d*)")
+		local hrp = player.Character and player.Character:FindFirstChild("HumanoidRootPart")
+		if not (x and hrp) then
+			return "usage: tppos x,y,z"
+		end
+		hrp.CFrame = CFrame.new(tonumber(x), tonumber(y), tonumber(z))
+		return "teleported"
+	end,
+}
+add{
+	name = "getpos",
+	alias = { "pos" },
+	group = "Players",
+	help = "Print + copy your position",
+	run = function()
+		local hrp = player.Character and player.Character:FindFirstChild("HumanoidRootPart")
+		if not hrp then
+			return "no character"
+		end
+		local p = hrp.Position
+		local s = string.format("%.1f, %.1f, %.1f", p.X, p.Y, p.Z)
+		if setclipboard then
+			pcall(setclipboard, s)
+		end
+		return s
+	end,
+}
+add{
+	name = "players",
+	alias = { "plist" },
+	group = "Players",
+	help = "Open the players window",
+	run = function()
+		Extra.openPlayers()
+	end,
+}
+
+-- ---------------- Self ----------------
+add{
+	name = "refresh",
+	alias = { "re" },
+	group = "Self",
+	help = "Respawn but keep your position",
+	bindable = true,
+	run = function()
+		local ch = player.Character
+		local hrp = ch and ch:FindFirstChild("HumanoidRootPart")
+		if not hrp then
+			return "no character"
+		end
+		local cf = hrp.CFrame
+		player.CharacterAdded:Once(function(c)
+			local h = c:WaitForChild("HumanoidRootPart")
+			task.wait(0.15)
+			h.CFrame = cf
+		end)
+		local hum = ch:FindFirstChildOfClass("Humanoid")
+		if hum then
+			hum.Health = 0
+		end
+		return "refreshing"
+	end,
+}
+add{
+	name = "invisible",
+	alias = { "inv" },
+	group = "Self",
+	help = "Open the invisibility window",
+	run = function()
+		Extra.openInvis()
+	end,
+}
+add{
+	name = "antifling",
+	group = "Self",
+	help = "Resist fling attacks",
+	bindable = true,
+	run = function()
+		Extra.antiflingToggle()
+		return "anti-fling " .. onoff(Extra.antiflingIsOn())
+	end,
+}
+
+-- ---------------- Server ----------------
+add{
+	name = "serverhop",
+	alias = { "shop" },
+	group = "Server",
+	help = "Hop to a different server",
+	run = function()
+		return hopTo(false)
+	end,
+}
+add{
+	name = "smallserver",
+	group = "Server",
+	help = "Join the emptiest available server",
+	run = function()
+		return hopTo(true)
+	end,
+}
+add{
+	name = "serverinfo",
+	group = "Server",
+	help = "Open the server info window",
+	run = function()
+		Extra.openServerInfo()
+	end,
+}
+add{
+	name = "copyid",
+	args = "<player>",
+	group = "Server",
+	help = "Copy a player's user id",
+	run = function(c)
+		local t = hubFindPlayer(c.arg)
+		if not t then
+			return "player not found"
+		end
+		if setclipboard then
+			pcall(setclipboard, tostring(t.UserId))
+		end
+		return "copied " .. t.UserId
+	end,
+}
+add{
+	name = "antiafk",
+	alias = { "afk" },
+	group = "Server",
+	help = "Block the 20-minute idle kick",
+	bindable = true,
+	run = function()
+		if _G.HubAntiAfk then
+			_G.HubAntiAfk:Disconnect()
+			_G.HubAntiAfk = nil
+			return "anti-afk off"
+		end
+		local vu = game:GetService("VirtualUser")
+		_G.HubAntiAfk = player.Idled:Connect(function()
+			vu:CaptureController()
+			vu:ClickButton2(Vector2.new())
+		end)
+		return "anti-afk on"
+	end,
+}
+add{
+	name = "fpscap",
+	args = "<n>",
+	group = "Server",
+	help = "Cap your FPS (executor feature)",
+	run = function(c)
+		if not c.n then
+			return "needs a number"
+		end
+		if not setfpscap then
+			return "no setfpscap on this executor"
+		end
+		setfpscap(c.n)
+		return "fps cap " .. c.n
+	end,
+}
+add{
+	name = "fps",
+	group = "Server",
+	help = "Show / hide the FPS + ping overlay",
+	bindable = true,
+	run = function()
+		local g = player.PlayerGui:FindFirstChild("FpsPingGui")
+		if not g then
+			return "no fps overlay"
+		end
+		g.Enabled = not g.Enabled
+		return "fps overlay " .. onoff(g.Enabled)
+	end,
+}
+add{
+	name = "ping",
+	group = "Server",
+	help = "Print your ping",
+	run = function()
+		return "ping " .. math.floor(player:GetNetworkPing() * 1000 + 0.5) .. "ms"
+	end,
+}
+
+-- ---------------- Chat ----------------
+add{
+	name = "chat",
+	args = "<msg>",
+	group = "Chat",
+	help = "Send a chat message",
+	run = function(c)
+		if c.arg == "" then
+			return "needs a message"
+		end
+		return sendChat(c.arg) and "sent" or "chat failed"
+	end,
+}
+add{
+	name = "spam",
+	args = "<msg>",
+	group = "Chat",
+	help = "Repeat a message every second (run again to stop)",
+	run = function(c)
+		if _G.HubSpam then
+			_G.HubSpam = false
+			return "spam off"
+		end
+		if c.arg == "" then
+			return "needs a message"
+		end
+		_G.HubSpam = true
+		task.spawn(function()
+			while _G.HubSpam do
+				pcall(sendChat, c.arg)
+				task.wait(1)
+			end
+		end)
+		return "spamming (run spam again to stop)"
+	end,
+}
+add{
+	name = "clearchat",
+	group = "Chat",
+	help = "Push your chat history off-screen",
+	run = function()
+		for _ = 1, 40 do
+			pcall(function()
+				game:GetService("StarterGui"):SetCore("ChatMakeSystemMessage", { Text = " " })
+			end)
+		end
+		return "chat cleared"
+	end,
+}
+
+-- ---------------- Scripts ----------------
+-- These URLs point at long-standing community utilities; if one 404s, swap the URL.
+add{
+	name = "run",
+	args = "<url>",
+	group = "Scripts",
+	help = "HttpGet + run a remote script",
+	run = function(c)
+		if c.arg == "" then
+			return "needs a url"
+		end
+		return loadUrl(c.arg)
+	end,
+}
+add{
+	name = "dex",
+	group = "Scripts",
+	help = "Load the DEX explorer",
+	run = function()
+		return loadUrl("https://raw.githubusercontent.com/infyiff/backup/main/dex.lua")
+	end,
+}
+add{
+	name = "infyield",
+	alias = { "iy" },
+	group = "Scripts",
+	help = "Load Infinite Yield",
+	run = function()
+		return loadUrl("https://raw.githubusercontent.com/EdgeIY/infiniteyield/master/source")
+	end,
+}
+add{
+	name = "remotespy",
+	group = "Scripts",
+	help = "Load a remote-event logger",
+	run = function()
+		return loadUrl("https://raw.githubusercontent.com/78n/SimpleSpy/master/SimpleSpySource.lua")
+	end,
+}
+add{
+	name = "fecheck",
+	group = "Scripts",
+	help = "Report whether the game is FilteringEnabled",
+	run = function()
+		return workspace.FilteringEnabled and "FE is ON (filtering enabled)" or "FE is OFF"
+	end,
+}
+add{
+	name = "fling",
+	args = "<player>",
+	group = "Scripts",
+	help = "Fling a player (FE-limited, troll)",
+	run = function(c)
+		return doFling(hubFindPlayer(c.arg))
 	end,
 }
 
@@ -4694,20 +6091,95 @@ connect(unloadBtn.MouseButton1Click, function()
 	end
 end)
 
-connect(player.Chatted, function(msg)
-	if msg:sub(1, 1) ~= "!" then
-		return
+-- ---------------- chat commands ----------------
+-- "!cmd" typed in chat should RUN, and ideally never actually send. Two independent parts:
+--   1) player.Chatted ALWAYS runs the command -> commands work on every executor/game.
+--   2) a best-effort __namecall hook swallows the outgoing send so it's never visible.
+-- If the hook can't hide it on a given game, you still get the command (just visible). A
+-- dedupe means that even if both the hook and Chatted see the same line, it runs once.
+local chatActive = true
+local lastCmd, lastCmdAt = "", 0
+local function runChatCommand(msg)
+	local now = os.clock()
+	if msg == lastCmd and now - lastCmdAt < 0.3 then
+		return -- already handled by the other path a moment ago
 	end
-	-- single implementation: the command bar owns dispatch. (The old nested
-	-- connect(player.Chatted) in here registered a fresh handler per command,
-	-- so commands fired more times the longer you played.)
+	lastCmd, lastCmdAt = msg, now
 	local ok, err = pcall(hubRunCommand, msg)
 	if not ok then
 		warn("[cmd] " .. tostring(err))
 	end
+end
+
+-- Hide the message by swallowing the outgoing send. The two standard pipelines are:
+--   legacy chat     -> SayMessageRequest:FireServer(text, ...)
+--   TextChatService -> TextChannel:SendAsync(text)
+-- both are __namecall, so one hook does both. It also swallows a CUSTOM chat remote if you
+-- name it in _G.TwinkChatRemotes (e.g. _G.TwinkChatRemotes = { "SendMessage" }). Prints a
+-- diagnostic to the F9 console the first time it sees any "!"-prefixed outgoing call, so if
+-- hiding fails you can read which remote/method your game actually uses and tell me.
+_G.TwinkChatRemotes = _G.TwinkChatRemotes or {} -- extra FireServer remote names to swallow
+do
+	local canHook = hookmetamethod and getnamecallmethod and checkcaller
+	if not canHook then
+		warn("[twinkhub] chat-hide off: this executor is missing hookmetamethod/getnamecallmethod/checkcaller")
+	else
+		local told = false
+		pcall(function()
+			local old
+			old = hookmetamethod(game, "__namecall", function(self, ...)
+				-- checkcaller(): leave the hub's OWN sends (!chat, !spam) alone; only touch the
+				-- real chat pipeline. typeof guard: some __namecall selves aren't Instances.
+				if chatActive and not checkcaller() and typeof(self) == "Instance" then
+					local method = getnamecallmethod()
+					if method == "FireServer" or method == "SendAsync" then
+						local msg = ...
+						if type(msg) == "string" and msg:sub(1, 1) == "!" then
+							-- one-time diagnostic so we can identify a custom chat remote
+							if not told then
+								told = true
+								print(
+									"[twinkhub] outgoing '!' chat seen -> method:", method,
+									"| class:", self.ClassName, "| name:", self.Name
+								)
+							end
+							local hide = false
+							if method == "SendAsync" then
+								hide = true -- SendAsync in practice is only TextChannel:SendAsync
+							elseif method == "FireServer" then
+								if self.Name == "SayMessageRequest" then
+									hide = true
+								else
+									for _, rn in ipairs(_G.TwinkChatRemotes) do
+										if self.Name == rn then
+											hide = true
+											break
+										end
+									end
+								end
+							end
+							if hide then
+								task.spawn(runChatCommand, msg)
+								return -- blocked: nothing reaches the server, nothing echoes locally
+							end
+						end
+					end
+				end
+				return old(self, ...)
+			end)
+		end)
+	end
+end
+
+connect(player.Chatted, function(msg)
+	if msg:sub(1, 1) ~= "!" then
+		return
+	end
+	runChatCommand(msg) -- runs even if the hook didn't fire; dedupe stops a double-run
 end)
 
 _G.ScriptHubCleanup = function()
+	chatActive = false -- leave the __namecall hook installed but transparent (can't un-hook cleanly)
 	for _, c in ipairs(conns) do
 		c:Disconnect()
 	end
