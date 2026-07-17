@@ -18,6 +18,8 @@ local UIS = game:GetService("UserInputService")
 local TweenService = game:GetService("TweenService")
 local HttpService = game:GetService("HttpService")
 
+_G.prefix = "!"
+
 local player = Players.LocalPlayer
 _G.CFrameSpeed = _G.CFrameSpeed or 0.09
 
@@ -4644,7 +4646,7 @@ local function openHelp()
 					rows[#rows + 1] = { text = string.upper(group), header = true }
 					first = false
 				end
-				rows[#rows + 1] = { text = "!" .. signature(s) .. "   -   " .. s.help }
+				rows[#rows + 1] = { text = _G.prefix .. signature(s) .. "   -   " .. s.help }
 			end
 		end
 		seen[group] = true
@@ -5105,6 +5107,21 @@ add{
 	bindable = true,
 	run = function()
 		main.Visible = not main.Visible
+	end,
+}
+add{
+	name = "prefix",
+	alias = { "setprefix" },
+	args = "<string>",
+	group = "Hub",
+	help = "Change the command prefix",
+	run = function(c)
+		if not c.arg or c.arg == "" then
+			return "Please enter a proper prefix."
+		end
+
+		_G.prefix = c.arg
+		return "Prefix changed to '" .. c.arg .. "'"
 	end,
 }
 
@@ -5970,7 +5987,7 @@ add{
 -- ---------------- dispatch ----------------
 hubRunCommand = function(input)
 	input = (input or ""):gsub("^%s+", ""):gsub("%s+$", "")
-	if input:sub(1, 1) == "!" then -- tolerate the chat-style prefix
+	if input:sub(1, 1) == _G.prefix then -- tolerate the chat-style prefix
 		input = input:sub(2)
 	end
 	local name, arg = input:match("^(%S+)%s*(.-)$")
@@ -6134,7 +6151,7 @@ do
 					local method = getnamecallmethod()
 					if method == "FireServer" or method == "SendAsync" then
 						local msg = ...
-						if type(msg) == "string" and msg:sub(1, 1) == "!" then
+						if type(msg) == "string" and msg:sub(1, 1) == _G.prefix then
 							-- one-time diagnostic so we can identify a custom chat remote
 							if not told then
 								told = true
@@ -6172,7 +6189,7 @@ do
 end
 
 connect(player.Chatted, function(msg)
-	if msg:sub(1, 1) ~= "!" then
+	if msg:sub(1, 1) ~= _G.prefix then
 		return
 	end
 	runChatCommand(msg) -- runs even if the hook didn't fire; dedupe stops a double-run
