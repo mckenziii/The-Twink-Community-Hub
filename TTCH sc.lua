@@ -18,7 +18,30 @@ local UIS = game:GetService("UserInputService")
 local TweenService = game:GetService("TweenService")
 local HttpService = game:GetService("HttpService")
 
-_G.prefix = "!"
+
+function checkForFile(file, text)
+	if isfile(file) then
+		return true
+	end
+
+	writefile(file, text)
+	return false
+end
+
+function checkForFile(file, text)
+	if isfile(file) then
+		return true
+	end
+
+	writefile(file, text)
+	return false
+end
+
+if checkForFile("prefix.txt", "!") == true then
+	_G.prefix = readfile("prefix.txt")
+else
+	_G.prefix = readfile("prefix.txt")
+end
 
 local player = Players.LocalPlayer
 _G.CFrameSpeed = _G.CFrameSpeed or 0.09
@@ -58,7 +81,7 @@ H.keyChangeCooldown = false
 
 -- Keybind labels. Anything in the UI that prints a key registers a refresher here;
 -- H.refreshKeys() re-runs them all. Called after ANY rebind (the key chip, the fly key
--- button, !bind / !unbind, or a config load) so no label can show a stale key.
+-- button, <prefix>bind / <prefix>unbind, or a config load) so no label can show a stale key.
 H.keyRefreshers = {}
 H.refreshKeys = function()
 	for _, f in ipairs(H.keyRefreshers) do
@@ -117,7 +140,7 @@ local ESPCOL = {
 	chams = Color3.fromRGB(230, 68, 68),
 }
 
--- Click TP settings live out here, not inside the !clicktp builder, so closing the window
+-- Click TP settings live out here, not inside the <prefix>clicktp builder, so closing the window
 -- keeps them: the builder reads these on open and writes them as you change them.
 -- Also saved to the config file, so they survive a rejoin too.
 local ClickTp = {
@@ -130,7 +153,7 @@ local ClickTp = {
 -- back through hubRunCommand, so anything the command bar can do is bindable.
 --
 -- These four used to be hard-wired in two other places (K/C/G in their own InputBegan
--- handler, X inside the Fly tab). That meant `!bind fly x` fired BOTH X handlers and the
+-- handler, X inside the Fly tab). That meant `<prefix>bind fly x` fired BOTH X handlers and the
 -- toggle cancelled itself out -- binds looked broken for any default key. One table, one
 -- listener, no double-fire. Saved to the config file.
 local Binds = {
@@ -358,7 +381,7 @@ local keyChip = make("TextButton", {
 
 round(keyChip, 6)
 
--- the chip always reads live: a !bind on `menu` shows here too
+-- the chip always reads live: a <prefix>bind on `menu` shows here too
 H.keyRefreshers[#H.keyRefreshers + 1] = function()
 	if not waitingForToggleKey then
 		keyChip.Text = H.keyFor("menu")
@@ -597,7 +620,7 @@ local char = player.Character or player.CharacterAdded:Wait()
 local hrp = char:WaitForChild("HumanoidRootPart")
 
 local speedEnabled = false
--- label re-reads the key, so `!bind cframe <key>` retitles this row
+-- label re-reads the key, so `<prefix>bind cframe <key>` retitles this row
 local speedRow = row(speedPage, 0, "CFrame movement")
 H.keyRefreshers[#H.keyRefreshers + 1] = function()
 	speedRow.Text = "CFrame movement [" .. H.keyFor("cframe") .. "]"
@@ -1726,7 +1749,7 @@ connect(flyBox.FocusLost, function()
 	flyBox.Text = tostring(flightSpeed)
 end)
 
--- shared !sfly command action: "!sfly" toggles fly; "!sfly <n>" sets speed and turns it on
+-- shared <prefix>sfly command action: "<prefix>sfly" toggles fly; "<prefix>sfly <n>" sets speed and turns it on
 local function doSfly(arg)
 	local n = tonumber(arg)
 	if n then
@@ -1753,7 +1776,7 @@ local flyKeyBtn = make("TextButton", {
 	BorderSizePixel = 0,
 }, flyPage)
 round(flyKeyBtn, 6)
--- reads live, so `!bind fly <key>` retitles this button too
+-- reads live, so `<prefix>bind fly <key>` retitles this button too
 H.keyRefreshers[#H.keyRefreshers + 1] = function()
 	if not awaitingFlyKey then
 		flyKeyBtn.Text = H.keyFor("fly")
@@ -2115,7 +2138,7 @@ end
 
 -- Infinite baseplate: tiles a grid of anchored parts out to TARGET_RADIUS, matching the
 -- existing baseplate's height/material/colour when it can find one. Toggles: a second call
--- tears the folder back down. The !infbaseplate chat command routes through here too.
+-- tears the folder back down. The <prefix>infbaseplate chat command routes through here too.
 world.toggleInfBaseplate = function()
 	local existing = workspace:FindFirstChild("InfBaseplate")
 	if existing then
@@ -4458,7 +4481,7 @@ end -- Extras scope
 
 -- ========== COMMAND BAR ==========
 -- Inline bar in the bottom strip, sat between the cog (ends x=34) and Unload (starts x=248).
--- hubRunCommand is THE command implementation: this bar, the !cmdbar popup and
+-- hubRunCommand is THE command implementation: this bar, the <prefix>cmdbar popup and
 -- player.Chatted all route through it, so the three copies that used to drift are gone.
 -- Feedback goes to this bar's placeholder via say(); chat callers just ignore it.
 do
@@ -4931,7 +4954,7 @@ local function openClickTp()
 		end
 	end)
 
-	-- clickConnect, not the hub's connect: this window is rebuilt on every !clicktp,
+	-- clickConnect, not the hub's connect: this window is rebuilt on every <prefix>clicktp,
 	-- so its listeners have to be disconnectable by ClickTpCleanup
 	H.makeDraggable(frame, title, clickConnect)
 
@@ -5121,6 +5144,7 @@ add{
 		end
 
 		_G.prefix = c.arg
+		writefile("prefix.txt", tostring(c.arg))
 		return "Prefix changed to '" .. c.arg .. "'"
 	end,
 }
@@ -6060,7 +6084,7 @@ H.makeDraggable(main, titleBar)
 
 -- ========== KEYBINDS ==========
 -- Nothing here any more: K/C/G/X are seeded entries in Binds (see CORE) and the single
--- listener in the command-bar block runs them. That's what stopped `!bind` on a default
+-- listener in the command-bar block runs them. That's what stopped `<prefix>bind` on a default
 -- key from firing two handlers and cancelling itself out.
 
 selectTab("Speed")
@@ -6109,7 +6133,7 @@ connect(unloadBtn.MouseButton1Click, function()
 end)
 
 -- ---------------- chat commands ----------------
--- "!cmd" typed in chat should RUN, and ideally never actually send. Two independent parts:
+-- "<prefix>cmd" typed in chat should RUN, and ideally never actually send. Two independent parts:
 --   1) player.Chatted ALWAYS runs the command -> commands work on every executor/game.
 --   2) a best-effort __namecall hook swallows the outgoing send so it's never visible.
 -- If the hook can't hide it on a given game, you still get the command (just visible). A
@@ -6133,7 +6157,7 @@ end
 --   TextChatService -> TextChannel:SendAsync(text)
 -- both are __namecall, so one hook does both. It also swallows a CUSTOM chat remote if you
 -- name it in _G.TwinkChatRemotes (e.g. _G.TwinkChatRemotes = { "SendMessage" }). Prints a
--- diagnostic to the F9 console the first time it sees any "!"-prefixed outgoing call, so if
+-- diagnostic to the F9 console the first time it sees any "<prefix>"-prefixed outgoing call, so if
 -- hiding fails you can read which remote/method your game actually uses and tell me.
 _G.TwinkChatRemotes = _G.TwinkChatRemotes or {} -- extra FireServer remote names to swallow
 do
@@ -6145,7 +6169,7 @@ do
 		pcall(function()
 			local old
 			old = hookmetamethod(game, "__namecall", function(self, ...)
-				-- checkcaller(): leave the hub's OWN sends (!chat, !spam) alone; only touch the
+				-- checkcaller(): leave the hub's OWN sends (<prefix>chat, <prefix>spam) alone; only touch the
 				-- real chat pipeline. typeof guard: some __namecall selves aren't Instances.
 				if chatActive and not checkcaller() and typeof(self) == "Instance" then
 					local method = getnamecallmethod()
@@ -6156,7 +6180,7 @@ do
 							if not told then
 								told = true
 								print(
-									"[twinkhub] outgoing '!' chat seen -> method:", method,
+									"[twinkhub] outgoing '<prefix>' chat seen -> method:", method,
 									"| class:", self.ClassName, "| name:", self.Name
 								)
 							end
