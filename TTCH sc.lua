@@ -269,6 +269,54 @@ end
 main.Name = "Main" -- keyed by name, so it needs one
 H.makeResizable(main, 380, 254)
 
+-- ---------------- dragging ----------------
+-- Move `frame` by dragging `handle` (the frame itself if you don't pass one).
+-- Every window used to carry its own near-identical copy of this; one of them had the
+-- bug where rebuilding the position dropped the Scale component and snapped the panel
+-- to the top -- hence carrying X.Scale/Y.Scale through here rather than assuming 0.
+-- `conn` lets a caller supply its own connector: windows that get destroyed and rebuilt
+-- (Click TP) track their connections separately so they can disconnect them, and using
+-- the hub's `connect` there would leak two listeners per open.
+H.makeDraggable = function(frame, handle, conn)
+	handle = handle or frame
+	conn = conn or connect
+	handle.Active = true
+	local dragging, startPos, framePos
+
+	local function isDrag(i)
+		return i.UserInputType == Enum.UserInputType.MouseButton1
+			or i.UserInputType == Enum.UserInputType.Touch
+	end
+
+	conn(handle.InputBegan, function(i)
+		if isDrag(i) then
+			dragging, startPos, framePos = true, i.Position, frame.Position
+		end
+	end)
+	conn(UIS.InputChanged, function(i)
+		if not dragging then
+			return
+		end
+		if i.UserInputType == Enum.UserInputType.MouseMovement
+			or i.UserInputType == Enum.UserInputType.Touch
+		then
+			local d = i.Position - startPos
+			frame.Position = UDim2.new(
+				framePos.X.Scale,
+				framePos.X.Offset + d.X,
+				framePos.Y.Scale,
+				framePos.Y.Offset + d.Y
+			)
+		end
+	end)
+	conn(UIS.InputEnded, function(i)
+		if isDrag(i) then
+			dragging = false
+		end
+	end)
+	return frame
+end
+
 
 -- title bar
 local titleBar = make("Frame", { Size = UDim2.new(1, 0, 0, 36), BackgroundTransparency = 1 }, main)
@@ -2954,26 +3002,7 @@ connect(picker.done.MouseButton1Click, function()
 	picker.frame.Visible = false
 end)
 
-do
-	local pDrag, pStart, pPos
-	connect(picker.title.InputBegan, function(i)
-		if i.UserInputType == Enum.UserInputType.MouseButton1 then
-			pDrag, pStart, pPos = true, i.Position, picker.frame.Position
-		end
-	end)
-	connect(UIS.InputChanged, function(i)
-		if pDrag and i.UserInputType == Enum.UserInputType.MouseMovement then
-			local d = i.Position - pStart
-			picker.frame.Position =
-				UDim2.new(pPos.X.Scale, pPos.X.Offset + d.X, pPos.Y.Scale, pPos.Y.Offset + d.Y)
-		end
-	end)
-	connect(UIS.InputEnded, function(i)
-		if i.UserInputType == Enum.UserInputType.MouseButton1 then
-			pDrag = false
-		end
-	end)
-end
+H.makeDraggable(picker.frame, picker.title)
 
 -- hiding the settings panel takes the picker with it (extra handlers: the originals were
 -- created before `picker` existed, so they can't see it)
@@ -3597,27 +3626,7 @@ for _, def in ipairs(setBtns) do
 	end)
 end
 
--- settings panel dragging
-do
-	local sDrag, sStart, sPos
-	connect(setTitle.InputBegan, function(i)
-		if i.UserInputType == Enum.UserInputType.MouseButton1 then
-			sDrag, sStart, sPos = true, i.Position, setFrame.Position
-		end
-	end)
-	connect(UIS.InputChanged, function(i)
-		if sDrag and i.UserInputType == Enum.UserInputType.MouseMovement then
-			local d = i.Position - sStart
-			setFrame.Position =
-				UDim2.new(sPos.X.Scale, sPos.X.Offset + d.X, sPos.Y.Scale, sPos.Y.Offset + d.Y)
-		end
-	end)
-	connect(UIS.InputEnded, function(i)
-		if i.UserInputType == Enum.UserInputType.MouseButton1 then
-			sDrag = false
-		end
-	end)
-end
+H.makeDraggable(setFrame, setTitle)
 
 -- exports: startup calls load once every tab exists; save is used by the Click TP window
 -- and the bind commands; keyFromName resolves `bind fly x`
@@ -3793,24 +3802,7 @@ local function listWindow(name, title, rows)
 	connect(layout:GetPropertyChangedSignal("AbsoluteContentSize"), size)
 	size()
 
-	-- drag by the title
-	local drag, ds, dp
-	connect(bar.InputBegan, function(i)
-		if i.UserInputType == Enum.UserInputType.MouseButton1 then
-			drag, ds, dp = true, i.Position, f.Position
-		end
-	end)
-	connect(UIS.InputChanged, function(i)
-		if drag and i.UserInputType == Enum.UserInputType.MouseMovement then
-			local d = i.Position - ds
-			f.Position = UDim2.new(dp.X.Scale, dp.X.Offset + d.X, dp.Y.Scale, dp.Y.Offset + d.Y)
-		end
-	end)
-	connect(UIS.InputEnded, function(i)
-		if i.UserInputType == Enum.UserInputType.MouseButton1 then
-			drag = false
-		end
-	end)
+	H.makeDraggable(f, bar)
 end
 
 -- ---------------- generated windows ----------------
@@ -3865,6 +3857,8 @@ local function openCmdBar()
 		Thickness = 1,
 	}, cmdGui)
 	H.makeResizable(cmdGui, 420, 45)
+	-- no handle: drag it by its border (clicks inside still go to the text box)
+	H.makeDraggable(cmdGui)
 
 	local box = make("TextBox", {
 		-- -34 not -20: leaves the bottom-right corner free for the resize grip
@@ -4093,40 +4087,9 @@ local function openClickTp()
 		end
 	end)
 
-	-- DRAGGING
-
-	do
-		local dragging = false
-		local start
-		local startPos
-
-		clickConnect(title.InputBegan, function(input)
-			if input.UserInputType == Enum.UserInputType.MouseButton1 then
-				dragging = true
-				start = input.Position
-				startPos = frame.Position
-			end
-		end)
-
-		clickConnect(UIS.InputChanged, function(input)
-			if dragging and input.UserInputType == Enum.UserInputType.MouseMovement then
-				local delta = input.Position - start
-
-				frame.Position = UDim2.new(
-					startPos.X.Scale,
-					startPos.X.Offset + delta.X,
-					startPos.Y.Scale,
-					startPos.Y.Offset + delta.Y
-				)
-			end
-		end)
-
-		clickConnect(UIS.InputEnded, function(input)
-			if input.UserInputType == Enum.UserInputType.MouseButton1 then
-				dragging = false
-			end
-		end)
-	end
+	-- clickConnect, not the hub's connect: this window is rebuilt on every !clicktp,
+	-- so its listeners have to be disconnectable by ClickTpCleanup
+	H.makeDraggable(frame, title, clickConnect)
 
 	_G.ClickTpToggle = function()
 		frame.Visible = not frame.Visible
@@ -4679,29 +4642,7 @@ local selectTab, world = H.selectTab, H.world
 local Speed, Grav, Esp, Hitbox, Move, Fly, hubLoadConfig, hubRunCommand = H.Speed, H.Grav, H.Esp, H.Hitbox, H.Move, H.Fly, H.loadConfig, H.runCommand
 
 -- ========== DRAGGING ==========
-do
-	local drag, start, pos
-	connect(titleBar.InputBegan, function(i)
-		if i.UserInputType == Enum.UserInputType.MouseButton1 then
-			drag = true
-			start = i.Position
-			pos = main.Position
-		end
-	end)
-	connect(UIS.InputChanged, function(i)
-		if drag and i.UserInputType == Enum.UserInputType.MouseMovement then
-			local d = i.Position - start
-			-- keep the original scale; rebuilding it as 0 snapped the panel to the top
-			main.Position =
-				UDim2.new(pos.X.Scale, pos.X.Offset + d.X, pos.Y.Scale, pos.Y.Offset + d.Y)
-		end
-	end)
-	connect(UIS.InputEnded, function(i)
-		if i.UserInputType == Enum.UserInputType.MouseButton1 then
-			drag = false
-		end
-	end)
-end
+H.makeDraggable(main, titleBar)
 
 -- ========== KEYBINDS ==========
 -- Nothing here any more: K/C/G/X are seeded entries in Binds (see CORE) and the single
@@ -5001,36 +4942,8 @@ connect(RunService.Heartbeat, function(dt)
 end)
 
 -- DRAGGING
-
-do
-	local dragging = false
-	local start
-	local pos
-
-	connect(bar.InputBegan, function(i)
-		if i.UserInputType == Enum.UserInputType.MouseButton1 then
-			dragging = true
-
-			start = i.Position
-
-			pos = bar.Position
-		end
-	end)
-
-	connect(UIS.InputChanged, function(i)
-		if dragging and i.UserInputType == Enum.UserInputType.MouseMovement then
-			local d = i.Position - start
-
-			bar.Position = UDim2.new(pos.X.Scale, pos.X.Offset + d.X, pos.Y.Scale, pos.Y.Offset + d.Y)
-		end
-	end)
-
-	connect(UIS.InputEnded, function(i)
-		if i.UserInputType == Enum.UserInputType.MouseButton1 then
-			dragging = false
-		end
-	end)
-end
+-- `connect` here is the overlay's own (declared above), so its cleanup handles these
+H.makeDraggable(bar, nil, connect)
 
 _G.FpsPingCleanup = function()
 	for _, c in ipairs(conns) do
