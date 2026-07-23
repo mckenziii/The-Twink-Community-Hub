@@ -198,7 +198,46 @@ local function tween(o, props)
 end
 
 -- ========== GUI ==========
-local gui = make("ScreenGui", { Name = "ScriptHub", ResetOnSpawn = false }, player:WaitForChild("PlayerGui"))
+-- Where our ScreenGuis live. Roblox draws CoreGui (topbar, chat, backpack, emote wheel) above
+-- EVERYTHING in PlayerGui -- they're two separate layers, not one sorted list -- so no
+-- DisplayOrder on a PlayerGui ScreenGui can climb over the Roblox UI. Sitting on top means
+-- leaving PlayerGui. Best to worst:
+--   gethui()   executor's hidden CoreGui-level container; also invisible to a CoreGui scan
+--   CoreGui    needs elevated identity, so probe it with a throwaway rather than assume
+--   PlayerGui  fallback: still above the game's own UI, just under Roblox's
+local guiHost = player:WaitForChild("PlayerGui")
+do
+	local getHidden = gethui or get_hidden_gui
+	local ok, hidden = false, nil
+	if getHidden then
+		ok, hidden = pcall(getHidden)
+	end
+	if ok and typeof(hidden) == "Instance" then
+		guiHost = hidden
+	elseif pcall(function()
+		local probe = Instance.new("Folder")
+		probe.Parent = game:GetService("CoreGui")
+		probe:Destroy()
+	end) then
+		guiHost = game:GetService("CoreGui")
+	end
+end
+
+-- Orders ScreenGuis WITHIN one container. Maxed on purpose: another script that also wanted
+-- to be on top has almost certainly picked a round number like 999 or 100000.
+local DISPLAY_ORDER = 2147483647
+
+local gui = make("ScreenGui", {
+	Name = "ScriptHub",
+	ResetOnSpawn = false,
+	DisplayOrder = DISPLAY_ORDER,
+}, guiHost)
+-- syn-era executors need the GUI registered or CoreGui housekeeping eats it; no-op elsewhere
+pcall(function()
+	if syn and syn.protect_gui then
+		syn.protect_gui(gui)
+	end
+end)
 
 -- toggle click sound (built-in asset, always loads; swap SoundId for any catalog sound)
 local clickSound = make("Sound", { SoundId = "rbxasset://sounds/clickfast.wav", Volume = 0.6 }, gui)
@@ -594,6 +633,9 @@ H.COL, H.ESPCOL, H.ClickTp, H.Binds = COL, ESPCOL, ClickTp, Binds
 H.themedRefs, H.themeRefreshers = themedRefs, themeRefreshers
 H.make, H.round, H.tween = make, round, tween
 H.gui, H.click, H.main, H.titleBar, H.keyChip = gui, click, main, titleBar, keyChip
+-- anything that makes its OWN ScreenGui (the FPS overlay) parents here too, or it'd end up
+-- back in PlayerGui and render under the hub
+H.guiHost, H.DISPLAY_ORDER = guiHost, DISPLAY_ORDER
 H.pages, H.tabs, H.selectTab, H.makeTab = pages, tabs, selectTab, makeTab
 H.row, H.makeSwitch = row, makeSwitch
 H.titleBar, H.conns = titleBar, conns
@@ -4455,131 +4497,6 @@ end
 -- bridge for the Settings scope's gatherConfig/applyConfig, which run at runtime (after this)
 H.getNotifs, H.setNotifs, H.addNotifSyncer = Extra.notifIsOn, Extra.notifSet, Extra.notifAddSyncer
 
--- ---------------- script-user presence ----------------
--- Other people running THIS hub can't be seen directly -- a filtering-enabled game gives one
--- client no window into another -- so we hail them over chat instead: `users` broadcasts a
--- tiny marked ping, every other copy of the hub answers with one of its own, and we list who
--- replied. The identity is the chat sender, so nothing sensitive rides in the text, but it IS
--- a real, visible chat message. The listener is always on (cheap); only the ping/answer talk.
-local TextChatService = game:GetService("TextChatService")
-local MARK = "ttch" -- beacon prefix; a following '?' hails, '!' answers, then a nonce
-local newChat = false
-pcall(function()
-	newChat = TextChatService.ChatVersion == Enum.ChatVersion.TextChatService
-end)
-local seen = {} -- [userId] = os.clock() when last heard from
-local lastAnnounce = 0
-
-local function broadcast(msg)
-	local sent = false
-	if newChat then
-		pcall(function()
-			local channels = TextChatService:FindFirstChild("TextChannels")
-			local ch = channels and channels:FindFirstChild("RBXGeneral")
-			if ch then
-				ch:SendAsync(msg)
-				sent = true
-			end
-		end)
-	end
-	if not sent then
-		-- legacy chat: fire the default chat system's remote straight at the server
-		pcall(function()
-			local events = game:GetService("ReplicatedStorage"):FindFirstChild("DefaultChatSystemChatEvents")
-			local say = events and events:FindFirstChild("SayMessageRequest")
-			if say then
-				say:FireServer(msg, "All")
-				sent = true
-			end
-		end)
-	end
-	return sent
-end
-
-local function announce()
-	-- rate-limited: a burst of hails shouldn't spam identical lines, and Roblox blocks exact
-	-- repeats anyway -- hence the changing nonce
-	if os.clock() - lastAnnounce < 2 then
-		return
-	end
-	lastAnnounce = os.clock()
-	broadcast(MARK .. "!" .. math.random(100, 999))
-end
-
-local function onBeacon(senderId, text)
-	if type(text) ~= "string" or senderId == player.UserId then
-		return
-	end
-	local op = text:match("^" .. MARK .. "([%?!])")
-	if op == "?" then
-		announce() -- someone is hailing -> answer
-	elseif op == "!" then
-		seen[senderId] = os.clock()
-	end
-end
-
--- listen on whichever chat system the game runs
-if newChat then
-	pcall(function()
-		connect(TextChatService.MessageReceived, function(m)
-			local src = m.TextSource
-			if src then
-				onBeacon(src.UserId, m.Text)
-			end
-		end)
-	end)
-else
-	local function hook(p)
-		connect(p.Chatted, function(msg)
-			onBeacon(p.UserId, msg)
-		end)
-	end
-	for _, p in ipairs(Players:GetPlayers()) do
-		if p ~= player then
-			hook(p)
-		end
-	end
-	connect(Players.PlayerAdded, hook)
-end
-
--- who answered within the last few seconds, resolved to players
-local function collectUsers()
-	local names, n = {}, 0
-	for id, t in pairs(seen) do
-		if os.clock() - t <= 8 then
-			n += 1
-			local p = Players:GetPlayerByUserId(id)
-			names[#names + 1] = p and (p.DisplayName .. "  (@" .. p.Name .. ")") or ("UserId " .. id)
-		end
-	end
-	return names, n
-end
-
-Extra.usersPing = function()
-	local ok = broadcast(MARK .. "?" .. math.random(100, 999))
-	if not ok then
-		if H.notify then
-			H.notify({ title = "Script users", text = "Couldn't broadcast -- this game's chat is locked down.", kind = "error" })
-		end
-		return
-	end
-	if H.notify then
-		H.notify({ title = "Script users", text = "Hailing other users\226\128\166", duration = 2.5 })
-	end
-	task.delay(2.5, function()
-		local names, n = collectUsers()
-		if not H.notify then
-			return
-		end
-		if n == 0 then
-			H.notify({ title = "Script users", text = "No one else answered -- looks like you're the only one here.", kind = "warn" })
-		else
-			H.notify({ title = "Script users (" .. n .. ")", text = table.concat(names, "\n"), kind = "success", duration = 8 })
-		end
-	end)
-end
-Extra.usersSeen = collectUsers
-
 -- ---------------- airwalk window ----------------
 Extra.openAirwalk = function()
 	local f, body = window("AirwalkUI", "Airwalk", 250, 180)
@@ -6644,17 +6561,6 @@ add{
 		return "join/leave notifications " .. onoff(Extra.notifIsOn())
 	end,
 }
-add{
-	name = "users",
-	alias = { "whosusing", "wu" },
-	group = "Players",
-	help = "Ping other people running this hub in the server (uses chat)",
-	run = function()
-		Extra.usersPing()
-		return "hailing script users\226\128\166"
-	end,
-}
-
 -- ---------------- Self ----------------
 add{
 	name = "refresh",
@@ -6785,7 +6691,7 @@ add{
 	help = "Show / hide the FPS + ping overlay",
 	bindable = true,
 	run = function()
-		local g = player.PlayerGui:FindFirstChild("FpsPingGui")
+		local g = H.guiHost:FindFirstChild("FpsPingGui")
 		if not g then
 			return "no fps overlay"
 		end
@@ -7140,7 +7046,7 @@ _G.ScriptHubCleanup = function()
 		end
 	end)
 	gui:Destroy()
-	local FpsPingGui = game:GetService("Players").LocalPlayer.PlayerGui:FindFirstChild("FpsPingGui")
+	local FpsPingGui = H.guiHost:FindFirstChild("FpsPingGui")
 
 	if FpsPingGui then
 		FpsPingGui:Destroy()
@@ -7209,7 +7115,10 @@ end
 
 -- GUI
 
-local old = player.PlayerGui:FindFirstChild("FpsPingGui")
+-- same host as the hub (see CORE), so the overlay clears the Roblox topbar too
+local guiHost = H.guiHost
+
+local old = guiHost:FindFirstChild("FpsPingGui")
 
 if old then
 	old:Destroy()
@@ -7218,7 +7127,8 @@ end
 local gui = make("ScreenGui", {
 	Name = "FpsPingGui",
 	ResetOnSpawn = false,
-}, player.PlayerGui)
+	DisplayOrder = H.DISPLAY_ORDER,
+}, guiHost)
 
 local bar = make("Frame", {
 	AnchorPoint = Vector2.new(0, 1),
