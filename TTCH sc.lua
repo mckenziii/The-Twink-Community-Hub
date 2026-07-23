@@ -2123,7 +2123,7 @@ end
 -- you asked for, not the one the game started with
 world.setBrightness = function(v)
 	world.capture()
-	v = math.clamp(v, 0, 10)
+	v = math.clamp(v, 0, 999999999999999999999999)
 	world.orig.Brightness = v
 	world.lighting.Brightness = v
 	return v
@@ -3231,6 +3231,26 @@ local PRESETS = {
 		colors = { bg = "#13141A", element = "#262934", stroke = "#373C4A", accent = "#6C80FF",
 			on = "#EB4C4C", text = "#EEF1F8", sub = "#8B92A5", off = "#464B5A" },
 		espColors = { box = "#E64444", name = "#FFFFFF", skeleton = "#E64444" },
+	},
+	{
+		name = "Syn's freaky touchy time :3",
+		colors = {
+			bg = "#100A1C",
+			element = "#241632",
+			stroke = "#3A2555",
+			accent = "#9B5CFF",
+			on = "#C45AFF",
+			text = "#F3E9FF",
+			sub = "#B8A1D9",
+			off = "#4B3B66"
+		},
+		espColors = {
+			box = "#9B5CFF",
+			name = "#FFFFFF",
+			skeleton = "#B45CFF",
+			tracer = "#B45CFF",
+			chams = "#9B5CFF"
+		},
 	},
 	{
 		name = "Midnight",
