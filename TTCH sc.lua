@@ -608,6 +608,184 @@ H.reselectTab = function()
 end
 end -- CORE scope
 
+-- ========== NOTIFICATIONS ==========
+-- A small in-GUI toast stack, themed from COL, that replaces Roblox's SetCore notifications.
+-- Toasts pile up top-right, slide + fade in, auto-dismiss, and can be clicked away. Every
+-- feature block reaches it through H.notify and nothing depends back on it, so it's safe to
+-- call from anywhere after this point.
+--
+-- Call styles:
+--   H.notify("Title", "body text")
+--   H.notify("Title", "body", 6)                   -- 6 seconds on screen
+--   H.notify{ title=, text=, duration=, kind= }    -- kind: info | success | warn | error
+do
+local gui, COL, make, round, connect = H.gui, H.COL, H.make, H.round, H.connect
+local TweenService = H.TweenService
+local TextService = game:GetService("TextService")
+
+local WIDTH, LEFT, RIGHT = 250, 12, 12
+local BODY_W = WIDTH - LEFT - RIGHT
+local MAX = 6 -- keep the stack bounded; oldest is retired past this
+
+local host = make("Frame", {
+	Name = "Toasts",
+	Size = UDim2.new(0, WIDTH, 1, -20),
+	Position = UDim2.new(1, -(WIDTH + 12), 0, 10),
+	BackgroundTransparency = 1,
+	BorderSizePixel = 0,
+	ZIndex = 50,
+}, gui)
+make("UIListLayout", {
+	Padding = UDim.new(0, 8),
+	HorizontalAlignment = Enum.HorizontalAlignment.Right,
+	VerticalAlignment = Enum.VerticalAlignment.Top,
+	SortOrder = Enum.SortOrder.LayoutOrder,
+}, host)
+
+-- accent colour per kind; the two off-theme colours are picked to read on any background
+local KIND = {
+	info = function() return COL.accent end,
+	success = function() return Color3.fromRGB(60, 190, 110) end,
+	warn = function() return Color3.fromRGB(232, 178, 58) end,
+	error = function() return COL.on end, -- COL.on is the reddish "toggle on" colour
+}
+
+local live = {} -- open toasts, oldest first: { dismiss = fn }
+local seq = 0
+
+local function measure(text)
+	if text == "" then
+		return 0
+	end
+	local ok, v = pcall(function()
+		return TextService:GetTextSize(text, 12, Enum.Font.Gotham, Vector2.new(BODY_W, 100000)).Y
+	end)
+	return ok and v or 14
+end
+
+local function notify(a, b, c)
+	local o = type(a) == "table" and a or { title = a, text = b, duration = c }
+	local title = tostring(o.title or "")
+	local text = tostring(o.text or "")
+	local duration = tonumber(o.duration) or 4
+	local accent = (KIND[o.kind] or KIND.info)()
+
+	local titleH = title ~= "" and 16 or 0
+	local gap = (title ~= "" and text ~= "") and 3 or 0
+	local bodyH = measure(text)
+	local height = 8 + titleH + gap + bodyH + 8
+
+	seq += 1
+	local slot = make("Frame", {
+		Name = "ToastSlot",
+		Size = UDim2.new(1, 0, 0, height),
+		BackgroundTransparency = 1,
+		BorderSizePixel = 0,
+		LayoutOrder = seq,
+		ZIndex = 50,
+	}, host)
+
+	-- CanvasGroup so one GroupTransparency fades the whole card (bar + text) together
+	local card = make("CanvasGroup", {
+		Size = UDim2.new(1, 0, 1, 0),
+		Position = UDim2.new(0, 14, 0, 0),
+		BackgroundColor3 = COL.bg,
+		GroupTransparency = 1,
+		BorderSizePixel = 0,
+		ZIndex = 50,
+	}, slot)
+	round(card, 8)
+	make("UIStroke", { Color = COL.stroke, Thickness = 1 }, card)
+
+	make("Frame", { -- accent bar down the left
+		Size = UDim2.new(0, 3, 1, -12),
+		Position = UDim2.new(0, 5, 0, 6),
+		BackgroundColor3 = accent,
+		BorderSizePixel = 0,
+		ZIndex = 51,
+	}, card)
+
+	if title ~= "" then
+		make("TextLabel", {
+			Size = UDim2.new(1, -(LEFT + RIGHT), 0, 16),
+			Position = UDim2.new(0, LEFT, 0, 8),
+			BackgroundTransparency = 1,
+			Font = Enum.Font.GothamBold,
+			TextSize = 13,
+			TextColor3 = COL.text,
+			Text = title,
+			TextXAlignment = Enum.TextXAlignment.Left,
+			TextTruncate = Enum.TextTruncate.AtEnd,
+			ZIndex = 51,
+		}, card)
+	end
+	if text ~= "" then
+		make("TextLabel", {
+			Size = UDim2.new(1, -(LEFT + RIGHT), 0, bodyH),
+			Position = UDim2.new(0, LEFT, 0, 8 + titleH + gap),
+			BackgroundTransparency = 1,
+			Font = Enum.Font.Gotham,
+			TextSize = 12,
+			TextColor3 = COL.sub,
+			Text = text,
+			TextWrapped = true,
+			TextXAlignment = Enum.TextXAlignment.Left,
+			TextYAlignment = Enum.TextYAlignment.Top,
+			ZIndex = 51,
+		}, card)
+	end
+
+	local closeBtn = make("TextButton", {
+		Size = UDim2.new(1, 0, 1, 0),
+		BackgroundTransparency = 1,
+		Text = "",
+		ZIndex = 52,
+	}, card)
+
+	TweenService:Create(card, TweenInfo.new(0.22, Enum.EasingStyle.Quad, Enum.EasingDirection.Out), {
+		Position = UDim2.new(0, 0, 0, 0),
+		GroupTransparency = 0,
+	}):Play()
+
+	local entry = {}
+	local dismissed = false
+	local function dismiss()
+		if dismissed then
+			return
+		end
+		dismissed = true
+		for i, e in ipairs(live) do
+			if e == entry then
+				table.remove(live, i)
+				break
+			end
+		end
+		TweenService:Create(card, TweenInfo.new(0.2, Enum.EasingStyle.Quad, Enum.EasingDirection.In), {
+			Position = UDim2.new(0, 24, 0, 0),
+			GroupTransparency = 1,
+		}):Play()
+		-- collapse the reserved slot so the toasts above slide up into the gap
+		TweenService:Create(slot, TweenInfo.new(0.2), { Size = UDim2.new(1, 0, 0, 0) }):Play()
+		task.delay(0.24, function()
+			slot:Destroy()
+		end)
+	end
+	entry.dismiss = dismiss
+
+	connect(closeBtn.MouseButton1Click, dismiss)
+	live[#live + 1] = entry
+	while #live > MAX do
+		live[1].dismiss()
+	end
+	if duration > 0 then
+		task.delay(duration, dismiss)
+	end
+	return entry
+end
+
+H.notify = notify
+end -- Notifications scope
+
 
 -- ========== SPEED TAB ==========
 -- Scoped; `Speed` below is the public surface (_G.CFrameSpeed stays global by design).
@@ -2631,6 +2809,7 @@ local function gatherConfig()
 		jumpPower = Move.getJumpPower(),
 		fov = world.fov,
 		esp = Esp.get(),
+		notifs = H.getNotifs and H.getNotifs() or false,
 		clickTp = {
 			enabled = ClickTp.enabled,
 			modifier = ClickTp.modifier.Name,
@@ -2700,6 +2879,11 @@ local function applyConfig(cfg)
 	end
 	if type(cfg.esp) == "table" then
 		Esp.set(cfg.esp)
+	end
+	-- notifs lives in the Extras scope (defined after this one) but applyConfig only ever
+	-- runs at startup/Load, by which point H.setNotifs is published
+	if type(cfg.notifs) == "boolean" and H.setNotifs then
+		H.setNotifs(cfg.notifs)
 	end
 	-- Only a NON-EMPTY binds table replaces the seeded defaults. An empty/missing one
 	-- leaves K/C/G/X alone -- otherwise a config written before the defaults existed
@@ -3713,6 +3897,46 @@ end
 
 
 
+-- ---------------- general toggles ----------------
+-- Sits below the theme tools (LayoutOrder 30+, clear of the colour rows at 1..N and the
+-- theme block at 20..24). The real state lives in the Extras scope, which loads after this
+-- one, so the switch calls through H.setNotifs on click and defers registering itself as a
+-- syncer until Extra exists -- that first sync also drops it onto the config-loaded value.
+do
+	make("TextLabel", {
+		Size = UDim2.new(1, 0, 1, 0),
+		BackgroundTransparency = 1,
+		Font = Enum.Font.GothamBold,
+		TextSize = 11,
+		TextColor3 = COL.sub,
+		Text = "NOTIFICATIONS",
+		TextXAlignment = Enum.TextXAlignment.Left,
+	}, themeRow(30, 18))
+
+	local jlRow = themeRow(31, 26)
+	make("TextLabel", {
+		Size = UDim2.new(1, -50, 1, 0),
+		BackgroundTransparency = 1,
+		Font = Enum.Font.Gotham,
+		TextSize = 13,
+		TextColor3 = COL.text,
+		Text = "Player join / leave toasts",
+		TextXAlignment = Enum.TextXAlignment.Left,
+	}, jlRow)
+	local setJl = H.makeSwitch(jlRow, 2, false, function(on)
+		if H.setNotifs then
+			H.setNotifs(on)
+		end
+	end)
+	task.defer(function()
+		if H.addNotifSyncer then
+			H.addNotifSyncer(function(on)
+				setJl(on)
+			end)
+		end
+	end)
+end
+
 function refreshSettingsUI()
 	for _, role in ipairs(COLOR_ROLES) do
 		local s = swatches[role.key]
@@ -4169,6 +4393,193 @@ connect(RunService.RenderStepped, function(dt)
 	cam.CFrame = CFrame.new(fcPos) * rot
 end)
 
+-- ---------------- join / leave notifications ----------------
+-- Toasts whenever someone enters or leaves the server, through the hub's own H.notify lib.
+-- Off by default. The state is shared through H.getNotifs / H.setNotifs so the command bar
+-- and the Settings-panel switch drive the same flag, and it rides along in the saved config.
+-- Registered syncers (a UI switch) are re-asserted on every set, so a panel built before the
+-- config loads still ends up on the right position.
+local notifOn = false
+local notifConns = {}
+local notifSyncers = {}
+local function notifStop()
+	for _, c in ipairs(notifConns) do
+		c:Disconnect()
+	end
+	table.clear(notifConns)
+end
+local function notifStart()
+	notifStop()
+	-- routed through the hub `connect` as well, so an unload tears them down even while ON
+	notifConns[#notifConns + 1] = connect(Players.PlayerAdded, function(p)
+		if p ~= player and H.notify then
+			H.notify({ title = "Player joined", text = p.DisplayName .. "  (@" .. p.Name .. ")", kind = "success" })
+		end
+	end)
+	notifConns[#notifConns + 1] = connect(Players.PlayerRemoving, function(p)
+		if p ~= player and H.notify then
+			H.notify({ title = "Player left", text = p.DisplayName .. "  (@" .. p.Name .. ")", kind = "warn" })
+		end
+	end)
+end
+local function notifSync()
+	for _, s in ipairs(notifSyncers) do
+		pcall(s, notifOn)
+	end
+end
+Extra.notifSet = function(on)
+	on = not not on
+	if on ~= notifOn then
+		notifOn = on
+		if on then
+			notifStart()
+		else
+			notifStop()
+		end
+	end
+	notifSync()
+	return notifOn
+end
+Extra.notifToggle = function()
+	return Extra.notifSet(not notifOn)
+end
+Extra.notifIsOn = function()
+	return notifOn
+end
+-- a UI switch registers here to stay in step with the command bar / config load; it's
+-- synced immediately so a late registration still picks up the current state
+Extra.notifAddSyncer = function(fn)
+	notifSyncers[#notifSyncers + 1] = fn
+	pcall(fn, notifOn)
+end
+-- bridge for the Settings scope's gatherConfig/applyConfig, which run at runtime (after this)
+H.getNotifs, H.setNotifs, H.addNotifSyncer = Extra.notifIsOn, Extra.notifSet, Extra.notifAddSyncer
+
+-- ---------------- script-user presence ----------------
+-- Other people running THIS hub can't be seen directly -- a filtering-enabled game gives one
+-- client no window into another -- so we hail them over chat instead: `users` broadcasts a
+-- tiny marked ping, every other copy of the hub answers with one of its own, and we list who
+-- replied. The identity is the chat sender, so nothing sensitive rides in the text, but it IS
+-- a real, visible chat message. The listener is always on (cheap); only the ping/answer talk.
+local TextChatService = game:GetService("TextChatService")
+local MARK = "ttch" -- beacon prefix; a following '?' hails, '!' answers, then a nonce
+local newChat = false
+pcall(function()
+	newChat = TextChatService.ChatVersion == Enum.ChatVersion.TextChatService
+end)
+local seen = {} -- [userId] = os.clock() when last heard from
+local lastAnnounce = 0
+
+local function broadcast(msg)
+	local sent = false
+	if newChat then
+		pcall(function()
+			local channels = TextChatService:FindFirstChild("TextChannels")
+			local ch = channels and channels:FindFirstChild("RBXGeneral")
+			if ch then
+				ch:SendAsync(msg)
+				sent = true
+			end
+		end)
+	end
+	if not sent then
+		-- legacy chat: fire the default chat system's remote straight at the server
+		pcall(function()
+			local events = game:GetService("ReplicatedStorage"):FindFirstChild("DefaultChatSystemChatEvents")
+			local say = events and events:FindFirstChild("SayMessageRequest")
+			if say then
+				say:FireServer(msg, "All")
+				sent = true
+			end
+		end)
+	end
+	return sent
+end
+
+local function announce()
+	-- rate-limited: a burst of hails shouldn't spam identical lines, and Roblox blocks exact
+	-- repeats anyway -- hence the changing nonce
+	if os.clock() - lastAnnounce < 2 then
+		return
+	end
+	lastAnnounce = os.clock()
+	broadcast(MARK .. "!" .. math.random(100, 999))
+end
+
+local function onBeacon(senderId, text)
+	if type(text) ~= "string" or senderId == player.UserId then
+		return
+	end
+	local op = text:match("^" .. MARK .. "([%?!])")
+	if op == "?" then
+		announce() -- someone is hailing -> answer
+	elseif op == "!" then
+		seen[senderId] = os.clock()
+	end
+end
+
+-- listen on whichever chat system the game runs
+if newChat then
+	pcall(function()
+		connect(TextChatService.MessageReceived, function(m)
+			local src = m.TextSource
+			if src then
+				onBeacon(src.UserId, m.Text)
+			end
+		end)
+	end)
+else
+	local function hook(p)
+		connect(p.Chatted, function(msg)
+			onBeacon(p.UserId, msg)
+		end)
+	end
+	for _, p in ipairs(Players:GetPlayers()) do
+		if p ~= player then
+			hook(p)
+		end
+	end
+	connect(Players.PlayerAdded, hook)
+end
+
+-- who answered within the last few seconds, resolved to players
+local function collectUsers()
+	local names, n = {}, 0
+	for id, t in pairs(seen) do
+		if os.clock() - t <= 8 then
+			n += 1
+			local p = Players:GetPlayerByUserId(id)
+			names[#names + 1] = p and (p.DisplayName .. "  (@" .. p.Name .. ")") or ("UserId " .. id)
+		end
+	end
+	return names, n
+end
+
+Extra.usersPing = function()
+	local ok = broadcast(MARK .. "?" .. math.random(100, 999))
+	if not ok then
+		if H.notify then
+			H.notify({ title = "Script users", text = "Couldn't broadcast -- this game's chat is locked down.", kind = "error" })
+		end
+		return
+	end
+	if H.notify then
+		H.notify({ title = "Script users", text = "Hailing other users\226\128\166", duration = 2.5 })
+	end
+	task.delay(2.5, function()
+		local names, n = collectUsers()
+		if not H.notify then
+			return
+		end
+		if n == 0 then
+			H.notify({ title = "Script users", text = "No one else answered -- looks like you're the only one here.", kind = "warn" })
+		else
+			H.notify({ title = "Script users (" .. n .. ")", text = table.concat(names, "\n"), kind = "success", duration = 8 })
+		end
+	end)
+end
+Extra.usersSeen = collectUsers
+
 -- ---------------- airwalk window ----------------
 Extra.openAirwalk = function()
 	local f, body = window("AirwalkUI", "Airwalk", 250, 180)
@@ -4426,6 +4837,435 @@ Extra.openPlayers = function()
 	end
 	connect(layout:GetPropertyChangedSignal("AbsoluteContentSize"), sz)
 	sz()
+end
+
+-- ---------------- player info window ----------------
+-- Live read-out for ONE player: identity up top, stats below, actions at the bottom.
+-- Refreshed on a throttled Heartbeat (4x a second) rather than per-frame -- none of these
+-- values are worth 60Hz, and the window is usually open while you do something else.
+Extra.openPlayerInfo = function(query)
+	-- An already-open window RETARGETS instead of toggling shut, so `<prefix>plrinfo bob`
+	-- from the bar does the obvious thing. A bare `plrinfo` still toggles, so it stays
+	-- sensible on a keybind.
+	if query and query ~= "" and Extra._piLookup then
+		Extra._piLookup(query)
+		return
+	end
+
+	local f, body = window("PlayerInfoUI", "Player Info", 320, 430)
+	if not f then
+		return
+	end
+
+	local target = player
+
+	local searchBox = make("TextBox", {
+		Size = UDim2.new(1, -70, 0, 26),
+		Position = UDim2.new(0, 0, 0, 0),
+		BackgroundColor3 = COL.element,
+		Font = Enum.Font.Gotham,
+		TextSize = 12,
+		TextColor3 = COL.text,
+		Text = "",
+		PlaceholderText = "name / display name  (blank = you)",
+		PlaceholderColor3 = COL.sub,
+		ClearTextOnFocus = false,
+		BorderSizePixel = 0,
+	}, body)
+	round(searchBox, 6)
+
+	local findBtn = make("TextButton", {
+		Size = UDim2.new(0, 66, 0, 26),
+		Position = UDim2.new(1, -66, 0, 0),
+		BackgroundColor3 = COL.accent,
+		Font = Enum.Font.GothamMedium,
+		TextSize = 12,
+		TextColor3 = Color3.new(1, 1, 1),
+		Text = "Look up",
+		AutoButtonColor = false,
+		BorderSizePixel = 0,
+	}, body)
+	round(findBtn, 6)
+
+	-- rbxthumb:// resolves without a yielding GetUserThumbnailAsync call
+	local shot = make("ImageLabel", {
+		Size = UDim2.new(0, 60, 0, 60),
+		Position = UDim2.new(0, 0, 0, 34),
+		BackgroundColor3 = COL.element,
+		BorderSizePixel = 0,
+		Image = "",
+	}, body)
+	round(shot, 8)
+
+	local nameLbl = make("TextLabel", {
+		Size = UDim2.new(1, -68, 0, 22),
+		Position = UDim2.new(0, 68, 0, 34),
+		BackgroundTransparency = 1,
+		Font = Enum.Font.GothamBold,
+		TextSize = 15,
+		TextColor3 = COL.text,
+		Text = "-",
+		TextXAlignment = Enum.TextXAlignment.Left,
+		TextTruncate = Enum.TextTruncate.AtEnd,
+	}, body)
+
+	local userLbl = make("TextLabel", {
+		Size = UDim2.new(1, -68, 0, 16),
+		Position = UDim2.new(0, 68, 0, 56),
+		BackgroundTransparency = 1,
+		Font = Enum.Font.Gotham,
+		TextSize = 12,
+		TextColor3 = COL.sub,
+		Text = "-",
+		TextXAlignment = Enum.TextXAlignment.Left,
+		TextTruncate = Enum.TextTruncate.AtEnd,
+	}, body)
+
+	local idLbl = make("TextLabel", {
+		Size = UDim2.new(1, -68, 0, 16),
+		Position = UDim2.new(0, 68, 0, 74),
+		BackgroundTransparency = 1,
+		Font = Enum.Font.Gotham,
+		TextSize = 11,
+		TextColor3 = COL.sub,
+		Text = "-",
+		TextXAlignment = Enum.TextXAlignment.Left,
+	}, body)
+
+	local sc = make("ScrollingFrame", {
+		Size = UDim2.new(1, 0, 1, -136),
+		Position = UDim2.new(0, 0, 0, 102),
+		BackgroundTransparency = 1,
+		BorderSizePixel = 0,
+		ScrollBarThickness = 3,
+		ScrollBarImageColor3 = COL.sub,
+		CanvasSize = UDim2.new(0, 0, 0, 0),
+	}, body)
+	local layout = make("UIListLayout", {
+		Padding = UDim.new(0, 2),
+		SortOrder = Enum.SortOrder.LayoutOrder,
+	}, sc)
+
+	local function stat(name, order)
+		local rf = make("Frame", {
+			Size = UDim2.new(1, -6, 0, 20),
+			BackgroundTransparency = 1,
+			LayoutOrder = order,
+		}, sc)
+		make("TextLabel", {
+			Size = UDim2.new(0.45, 0, 1, 0),
+			BackgroundTransparency = 1,
+			Font = Enum.Font.Gotham,
+			TextSize = 12,
+			TextColor3 = COL.sub,
+			Text = name,
+			TextXAlignment = Enum.TextXAlignment.Left,
+		}, rf)
+		return make("TextLabel", {
+			Size = UDim2.new(0.55, 0, 1, 0),
+			Position = UDim2.new(0.45, 0, 0, 0),
+			BackgroundTransparency = 1,
+			Font = Enum.Font.GothamMedium,
+			TextSize = 12,
+			TextColor3 = COL.text,
+			Text = "-",
+			TextXAlignment = Enum.TextXAlignment.Left,
+			TextTruncate = Enum.TextTruncate.AtEnd,
+		}, rf)
+	end
+
+	-- Static rows, always present (orders 1..N). Team is kept because blankStats writes the
+	-- "why they're gone" reason into it. Dynamic per-game rows (leaderstats) live below at
+	-- LayoutOrder 100+ and are rebuilt only when the target -- or its stat set -- changes.
+	local ROWS = {
+		"Account age", "Created", "Membership", "Team",
+		"Health", "Walk speed", "Jump", "Speed", "Hip height",
+		"Rig type", "State", "Floor", "Tool",
+		"Position", "Distance", "Ping", "Appearance",
+	}
+	local val = {}
+	for i, n in ipairs(ROWS) do
+		val[n] = stat(n, i)
+	end
+
+	local function sz()
+		sc.CanvasSize = UDim2.new(0, 0, 0, layout.AbsoluteContentSize.Y + 6)
+	end
+	connect(layout:GetPropertyChangedSignal("AbsoluteContentSize"), sz)
+	sz()
+
+	-- ----- dynamic leaderstats section -----
+	-- Whatever the game hangs off the player's `leaderstats` folder: cash, kills, levels,
+	-- anything. We can't know the names ahead of time, so the rows are built on demand and
+	-- torn down when the target (or the set of stat names) changes; their live values are
+	-- refreshed each paint straight off the Value objects.
+	local dynRows = {} -- frames to destroy on rebuild
+	local dynVals = {} -- { obj = ValueBase, label = TextLabel }
+	local dynSig -- signature of the current target + its stat names; nil forces a rebuild
+	local function clearDyn()
+		for _, fr in ipairs(dynRows) do
+			fr:Destroy()
+		end
+		dynRows = {}
+		dynVals = {}
+	end
+	local function header(text, order)
+		local rf = make("Frame", {
+			Size = UDim2.new(1, -6, 0, 20),
+			BackgroundTransparency = 1,
+			LayoutOrder = order,
+		}, sc)
+		make("TextLabel", {
+			Size = UDim2.new(1, 0, 1, 0),
+			BackgroundTransparency = 1,
+			Font = Enum.Font.GothamBold,
+			TextSize = 12,
+			TextColor3 = COL.accent,
+			Text = text,
+			TextXAlignment = Enum.TextXAlignment.Left,
+		}, rf)
+		dynRows[#dynRows + 1] = rf
+	end
+	local function dynStat(name, order)
+		local vl = stat(name, order)
+		dynRows[#dynRows + 1] = vl.Parent
+		return vl
+	end
+	local function ensureDyn()
+		local ls = target and target.Parent == Players and target:FindFirstChild("leaderstats")
+		local sig = tostring(target and target.UserId)
+		if ls then
+			for _, v in ipairs(ls:GetChildren()) do
+				sig = sig .. "|" .. v.Name
+			end
+		end
+		if sig == dynSig then
+			return
+		end
+		dynSig = sig
+		clearDyn()
+		if ls then
+			header("Leaderstats", 100)
+			local order = 101
+			for _, v in ipairs(ls:GetChildren()) do
+				if v:IsA("ValueBase") then
+					dynVals[#dynVals + 1] = { obj = v, label = dynStat(v.Name, order) }
+					order += 1
+				end
+			end
+		end
+	end
+
+	local function blankStats(why)
+		for _, n in ipairs(ROWS) do
+			val[n].Text = "-"
+		end
+		clearDyn()
+		dynSig = nil
+		if why then
+			val.Team.Text = why
+		end
+	end
+
+	-- only the identity block is keyed off this: it's the part that costs an image load,
+	-- so it's rewritten when the target changes rather than four times a second
+	local shownId
+
+	local function paint()
+		if not target then
+			return
+		end
+		if target.UserId ~= shownId then
+			shownId = target.UserId
+			shot.Image = "rbxthumb://type=AvatarHeadShot&id=" .. target.UserId .. "&w=150&h=150"
+			nameLbl.Text = target.DisplayName
+			userLbl.Text = "@" .. target.Name
+			idLbl.Text = "ID " .. target.UserId .. (target == player and "   (you)" or "")
+		end
+		if target.Parent ~= Players then
+			blankStats("left the game")
+			return
+		end
+		val["Account age"].Text = target.AccountAge .. " days"
+		-- AccountAge is only day-granular, so the derived date is +/- a day; good enough to eyeball
+		val.Created.Text = target.AccountAge > 0
+			and os.date("!%Y-%m-%d", os.time() - target.AccountAge * 86400)
+			or "-"
+		val.Membership.Text = (target.MembershipType == Enum.MembershipType.Premium) and "Premium" or "None"
+		val.Team.Text = target.Team and target.Team.Name or "none"
+		val.Appearance.Text = tostring(target.CharacterAppearanceId)
+
+		local ch = target.Character
+		local hum = ch and ch:FindFirstChildOfClass("Humanoid")
+		local hrp = ch and ch:FindFirstChild("HumanoidRootPart")
+
+		if hum then
+			val.Health.Text = ("%d / %d"):format(math.floor(hum.Health), math.floor(hum.MaxHealth))
+			val["Walk speed"].Text = ("%g"):format(hum.WalkSpeed)
+			-- JumpPower is meaningless when the game drives JumpHeight instead, so say which
+			val.Jump.Text = hum.UseJumpPower and ("%g"):format(hum.JumpPower)
+				or (("%g"):format(hum.JumpHeight) .. " (height)")
+			val["Hip height"].Text = ("%g"):format(hum.HipHeight)
+			val["Rig type"].Text = hum.RigType.Name
+			local okState, st = pcall(function()
+				return hum:GetState().Name
+			end)
+			val.State.Text = okState and st or "-"
+			val.Floor.Text = hum.FloorMaterial.Name
+			local tool = ch:FindFirstChildOfClass("Tool")
+			val.Tool.Text = tool and tool.Name or "none"
+		else
+			for _, n in ipairs({ "Health", "Walk speed", "Jump", "Hip height", "Rig type", "State", "Floor", "Tool" }) do
+				val[n].Text = "-"
+			end
+		end
+
+		if hrp then
+			local p = hrp.Position
+			val.Position.Text = ("%d, %d, %d"):format(math.floor(p.X), math.floor(p.Y), math.floor(p.Z))
+			local me = getHRP()
+			val.Distance.Text = me and (math.floor((me.Position - p).Magnitude) .. " studs") or "-"
+			-- horizontal speed only; vertical is mostly gravity noise
+			local v = hrp.AssemblyLinearVelocity
+			val.Speed.Text = ("%d studs/s"):format(math.floor(Vector3.new(v.X, 0, v.Z).Magnitude + 0.5))
+		else
+			val.Position.Text, val.Distance.Text, val.Speed.Text = "no character", "-", "-"
+		end
+
+		-- GetNetworkPing is only truthful for yourself; a remote player always reads 0
+		val.Ping.Text = (target == player)
+			and (math.floor(player:GetNetworkPing() * 1000 + 0.5) .. " ms")
+			or "-"
+
+		-- game-specific leaderstats: rebuild rows if the set changed, then refresh values
+		ensureDyn()
+		for _, d in ipairs(dynVals) do
+			if d.obj.Parent then
+				d.label.Text = tostring(d.obj.Value)
+			end
+		end
+	end
+
+	-- reply in the placeholder then fade back, same idiom the command bar uses
+	local IDLE_HINT = "name / display name  (blank = you)"
+	local function hint(msg)
+		searchBox.PlaceholderText = msg
+		task.delay(2.5, function()
+			if searchBox.Parent and searchBox.PlaceholderText == msg then
+				searchBox.PlaceholderText = IDLE_HINT
+			end
+		end)
+	end
+
+	local function lookup(txt)
+		txt = tostring(txt or ""):gsub("^%s+", ""):gsub("%s+$", "")
+		searchBox.Text = ""
+		local low = txt:lower()
+		-- hubFindPlayer deliberately skips you, so match yourself here
+		if txt == "" or low == "me" or low == "self"
+			or player.Name:lower():sub(1, #low) == low
+			or player.DisplayName:lower():sub(1, #low) == low
+		then
+			target = player
+			paint()
+			return
+		end
+		local found = H.findPlayer(txt)
+		if not found then
+			hint("no such player")
+			return
+		end
+		target = found
+		paint()
+	end
+
+	connect(findBtn.MouseButton1Click, function()
+		click()
+		lookup(searchBox.Text)
+	end)
+	connect(searchBox.FocusLost, function(enter)
+		if enter then
+			lookup(searchBox.Text)
+		end
+	end)
+
+	-- action row. Kept 18px short of the right edge so it never sits under the resize grip.
+	local btnRow = make("Frame", {
+		Size = UDim2.new(1, -18, 0, 26),
+		Position = UDim2.new(0, 0, 1, -26),
+		BackgroundTransparency = 1,
+	}, body)
+
+	local function act(text, i, colour, fn)
+		local b = make("TextButton", {
+			Size = UDim2.new(0.333, -4, 1, 0),
+			Position = UDim2.new(0.333 * i, 4 * i, 0, 0),
+			BackgroundColor3 = colour,
+			Font = Enum.Font.GothamMedium,
+			TextSize = 12,
+			TextColor3 = Color3.new(1, 1, 1),
+			Text = text,
+			AutoButtonColor = false,
+			BorderSizePixel = 0,
+		}, btnRow)
+		round(b, 6)
+		connect(b.MouseButton1Click, function()
+			click()
+			fn()
+		end)
+	end
+
+	act("Teleport", 0, COL.accent, function()
+		local thrp = target and target.Character and target.Character:FindFirstChild("HumanoidRootPart")
+		local myhrp = getHRP()
+		if thrp and myhrp then
+			myhrp.CFrame = thrp.CFrame + Vector3.new(0, 0, 3)
+		else
+			hint("nothing to teleport to")
+		end
+	end)
+	act("Spectate", 1, COL.accent, function()
+		local thum = target and target.Character and target.Character:FindFirstChildOfClass("Humanoid")
+		if thum then
+			workspace.CurrentCamera.CameraSubject = thum
+		else
+			hint("nothing to spectate")
+		end
+	end)
+	act("Copy ID", 2, COL.stroke, function()
+		if setclipboard and target then
+			pcall(setclipboard, tostring(target.UserId))
+			hint("copied " .. target.UserId)
+		else
+			hint("no setclipboard")
+		end
+	end)
+
+	-- Own connection, not the hub's: it has to die with the window, or a closed panel
+	-- would keep painting labels that no longer exist.
+	local acc = 0
+	local refresh = RunService.Heartbeat:Connect(function(dt)
+		acc += dt
+		if acc < 0.25 then
+			return
+		end
+		acc = 0
+		paint()
+	end)
+
+	Extra._piLookup = lookup
+	connect(f.Destroying, function()
+		refresh:Disconnect()
+		if Extra._piLookup == lookup then
+			Extra._piLookup = nil
+		end
+	end)
+
+	if query and query ~= "" then
+		lookup(query)
+	else
+		paint()
+	end
 end
 
 -- ---------------- server info window ----------------
@@ -5237,7 +6077,7 @@ add{
 	name = "brightness",
 	args = "<n>",
 	group = "World",
-	help = "Lighting brightness (0-10)",
+	help = "Lighting brightness (0-lots)",
 	run = function(c)
 		if not c.n then
 			return "needs a number"
@@ -5774,6 +6614,46 @@ add{
 		Extra.openPlayers()
 	end,
 }
+add{
+	name = "playerinfo",
+	alias = { "plrinfo" },
+	args = "<player>",
+	group = "Players",
+	help = "Live info window for a player (blank = you)",
+	bindable = true,
+	run = function(c)
+		Extra.openPlayerInfo(c.arg)
+	end,
+}
+add{
+	name = "notifs",
+	alias = { "joinleave", "jl" },
+	args = "<on/off>",
+	group = "Players",
+	help = "Toast when players join or leave the server",
+	bindable = true,
+	run = function(c)
+		local a = (c.arg or ""):lower()
+		if a == "on" or a == "1" or a == "true" then
+			Extra.notifSet(true)
+		elseif a == "off" or a == "0" or a == "false" then
+			Extra.notifSet(false)
+		else
+			Extra.notifToggle()
+		end
+		return "join/leave notifications " .. onoff(Extra.notifIsOn())
+	end,
+}
+add{
+	name = "users",
+	alias = { "whosusing", "wu" },
+	group = "Players",
+	help = "Ping other people running this hub in the server (uses chat)",
+	run = function()
+		Extra.usersPing()
+		return "hailing script users\226\128\166"
+	end,
+}
 
 -- ---------------- Self ----------------
 add{
@@ -6268,12 +7148,13 @@ _G.ScriptHubCleanup = function()
 	_G.ScriptHubCleanup = nil
 end
 
--- load notification = proof this version actually ran
+-- load notification = proof this version actually ran (through our own toast lib now)
 pcall(function()
-	game:GetService("StarterGui"):SetCore("SendNotification", {
-		Title = "Twink Community Hub",
-		Text = VERSION .. " loaded | K hide | C speed | G gravity",
-		Duration = 4,
+	H.notify({
+		title = "Twink Community Hub",
+		text = VERSION .. " loaded  |  K hide  |  C speed  |  G gravity",
+		kind = "success",
+		duration = 5,
 	})
 end)
 
