@@ -2111,7 +2111,7 @@ round(flyBox, 6)
 connect(flyBox.FocusLost, function()
 	local n = tonumber(flyBox.Text)
 	if n then
-		flightSpeed = math.clamp(n, 0, FLY_MAX_SPEED)
+		flightSpeed = math.clamp(n, -50000000, FLY_MAX_SPEED)
 	end
 	flyBox.Text = tostring(flightSpeed)
 end)
@@ -2120,7 +2120,7 @@ end)
 local function doSfly(arg)
 	local n = tonumber(arg)
 	if n then
-		flightSpeed = math.clamp(n, 0, FLY_MAX_SPEED)
+		flightSpeed = math.clamp(n, -50000000, FLY_MAX_SPEED)
 		flyBox.Text = tostring(flightSpeed)
 		if not flyEnabled then
 			toggleFly()
@@ -2201,7 +2201,7 @@ H.Fly = {
 		return flightSpeed
 	end,
 	setSpeed = function(v)
-		flightSpeed = math.clamp(v, 0, FLY_MAX_SPEED)
+		flightSpeed = math.clamp(v, -50000000, FLY_MAX_SPEED)
 		flyBox.Text = tostring(flightSpeed)
 	end,
 }
