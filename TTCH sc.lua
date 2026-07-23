@@ -828,6 +828,152 @@ end
 H.notify = notify
 end -- Notifications scope
 
+-- ========== CREDITS ==========
+-- Centered splash: shown once on load for ~5s, and any time via the `credits` command. Pops
+-- in from the middle of the screen, fades out on its own, and can be clicked away early.
+-- Exposed as H.credits(duration); nothing depends back on it.
+do
+local gui, COL, make, round, connect = H.gui, H.COL, H.make, H.round, H.connect
+local TweenService = H.TweenService
+local VERSION = H.VERSION
+
+local current -- the live splash, if one is up
+
+local function credits(duration)
+	duration = tonumber(duration) or 5
+	if current then
+		current:Destroy()
+		current = nil
+	end
+
+	local W, HT = 440, 208
+	-- CanvasGroup so one GroupTransparency fades the whole panel; centred via AnchorPoint so
+	-- the UIScale pop grows from the middle
+	local card = make("CanvasGroup", {
+		Name = "Credits",
+		AnchorPoint = Vector2.new(0.5, 0.5),
+		Position = UDim2.new(0.5, 0, 0.5, 0),
+		Size = UDim2.new(0, W, 0, HT),
+		BackgroundColor3 = COL.bg,
+		GroupTransparency = 1,
+		BorderSizePixel = 0,
+		ZIndex = 60,
+	}, gui)
+	current = card
+	round(card, 14)
+	make("UIStroke", { Color = COL.accent, Thickness = 1.5 }, card)
+	local scale = make("UIScale", { Scale = 0.9 }, card)
+
+	make("TextLabel", {
+		Size = UDim2.new(1, -24, 0, 30),
+		Position = UDim2.new(0, 12, 0, 26),
+		BackgroundTransparency = 1,
+		Font = Enum.Font.GothamBold,
+		TextSize = 23,
+		TextColor3 = COL.text,
+		Text = "The Twink Community Hub",
+		TextXAlignment = Enum.TextXAlignment.Center,
+		ZIndex = 61,
+	}, card)
+
+	-- divider under the title
+	make("Frame", {
+		Size = UDim2.new(1, -180, 0, 1),
+		Position = UDim2.new(0, 90, 0, 66),
+		BackgroundColor3 = COL.stroke,
+		BorderSizePixel = 0,
+		ZIndex = 61,
+	}, card)
+
+	make("TextLabel", {
+		Size = UDim2.new(1, -24, 0, 20),
+		Position = UDim2.new(0, 12, 0, 78),
+		BackgroundTransparency = 1,
+		Font = Enum.Font.GothamMedium,
+		TextSize = 15,
+		TextColor3 = COL.accent,
+		Text = "made by Vertxxy & synfulfox",
+		TextXAlignment = Enum.TextXAlignment.Center,
+		ZIndex = 61,
+	}, card)
+	make("TextLabel", {
+		Size = UDim2.new(1, -24, 0, 18),
+		Position = UDim2.new(0, 12, 0, 102),
+		BackgroundTransparency = 1,
+		Font = Enum.Font.Gotham,
+		TextSize = 13,
+		TextColor3 = COL.text,
+		Text = "emotional support: Quan",
+		TextXAlignment = Enum.TextXAlignment.Center,
+		ZIndex = 61,
+	}, card)
+	make("TextLabel", {
+		Size = UDim2.new(1, -16, 0, 18),
+		Position = UDim2.new(0, 8, 0, 134),
+		BackgroundTransparency = 1,
+		Font = Enum.Font.Gotham,
+		TextSize = 12,
+		TextColor3 = COL.sub,
+		Text = "discord: Vertxxy - @vertxxy   Syn - @synfulfox__   Quan - @ekojj",
+		TextXAlignment = Enum.TextXAlignment.Center,
+		ZIndex = 61,
+	}, card)
+	make("TextLabel", {
+		Size = UDim2.new(1, -24, 0, 16),
+		Position = UDim2.new(0, 12, 1, -26),
+		BackgroundTransparency = 1,
+		Font = Enum.Font.Gotham,
+		TextSize = 11,
+		TextColor3 = COL.sub,
+		Text = VERSION,
+		TextXAlignment = Enum.TextXAlignment.Center,
+		ZIndex = 61,
+	}, card)
+
+	-- full-panel click target so tapping it anywhere dismisses early
+	local btn = make("TextButton", {
+		Size = UDim2.new(1, 0, 1, 0),
+		BackgroundTransparency = 1,
+		Text = "",
+		ZIndex = 62,
+	}, card)
+
+	-- pop in
+	TweenService:Create(card, TweenInfo.new(0.3, Enum.EasingStyle.Quad, Enum.EasingDirection.Out), {
+		GroupTransparency = 0,
+	}):Play()
+	TweenService:Create(scale, TweenInfo.new(0.35, Enum.EasingStyle.Back, Enum.EasingDirection.Out), {
+		Scale = 1,
+	}):Play()
+
+	local dismissed = false
+	local function dismiss()
+		if dismissed then
+			return
+		end
+		dismissed = true
+		if current == card then
+			current = nil
+		end
+		TweenService:Create(card, TweenInfo.new(0.25, Enum.EasingStyle.Quad, Enum.EasingDirection.In), {
+			GroupTransparency = 1,
+		}):Play()
+		TweenService:Create(scale, TweenInfo.new(0.25), { Scale = 0.92 }):Play()
+		task.delay(0.28, function()
+			card:Destroy()
+		end)
+	end
+
+	connect(btn.MouseButton1Click, dismiss)
+	if duration > 0 then
+		task.delay(duration, dismiss)
+	end
+	return card
+end
+
+H.credits = credits
+end -- Credits scope
+
 
 -- ========== SPEED TAB ==========
 -- Scoped; `Speed` below is the public surface (_G.CFrameSpeed stays global by design).
@@ -5926,6 +6072,17 @@ add{
 		return "Prefix changed to '" .. c.arg .. "'"
 	end,
 }
+add{
+	name = "credits",
+	alias = { "cred" },
+	group = "Hub",
+	help = "Show the credits splash",
+	run = function()
+		if H.credits then
+			H.credits(5)
+		end
+	end,
+}
 
 -- ---------------- values ----------------
 add{
@@ -7062,6 +7219,11 @@ pcall(function()
 		kind = "success",
 		duration = 5,
 	})
+end)
+
+-- credits splash on open: dead-centre of the screen for ~5s (the `credits` command re-shows it)
+pcall(function()
+	H.credits(5)
 end)
 
 -- FPS + Ping counter --- execute through your executor
