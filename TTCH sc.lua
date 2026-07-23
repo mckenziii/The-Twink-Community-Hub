@@ -1705,6 +1705,18 @@ do
 -- pulled out of H once, so the body below uses fast locals
 local Players, player, connect, COL, make, round = H.Players, H.player, H.connect, H.COL, H.make, H.round
 local click, playerPage = H.click, H.playerPage
+local RunService = H.RunService
+
+-- the tab page is a fixed ~122px frame, so everything lives in a scroller (same as the ESP
+-- tab) -- that's what lets the new carry actions fit below the teleport/spectate row
+local playerScroll = make("ScrollingFrame", {
+	Size = UDim2.new(1, 0, 1, 0),
+	BackgroundTransparency = 1,
+	BorderSizePixel = 0,
+	ScrollBarThickness = 3,
+	ScrollBarImageColor3 = COL.sub,
+	CanvasSize = UDim2.new(0, 0, 0, 272),
+}, playerPage)
 
 local function findPlayer(txt)
 	txt = (txt or ""):lower()
@@ -1731,7 +1743,7 @@ local playerMainRow = make("TextLabel", {
 	TextYAlignment = Enum.TextYAlignment.Center,
 	TextScaled = true,
 	TextWrapped = false,
-}, playerPage)
+}, playerScroll)
 -- TextScaled alone made "Player name" fill the whole row (huge), then shrink to nothing
 -- once it became the long "Player: x, Username: y, ID: z". The constraint keeps the
 -- scaling (long names still shrink to fit) but caps it at the size everything else uses.
@@ -1749,7 +1761,7 @@ local playerBox = make("TextBox", {
 	ClearTextOnFocus = false,
 	BorderSizePixel = 0,
 	Text = "",
-}, playerPage)
+}, playerScroll)
 
 round(playerBox, 6)
 
@@ -1785,7 +1797,7 @@ local tpBtn = make("TextButton", {
 	Text = "Teleport",
 	AutoButtonColor = false,
 	BorderSizePixel = 0,
-}, playerPage)
+}, playerScroll)
 round(tpBtn, 6)
 
 local specBtn = make("TextButton", {
@@ -1798,19 +1810,19 @@ local specBtn = make("TextButton", {
 	Text = "Spectate",
 	AutoButtonColor = false,
 	BorderSizePixel = 0,
-}, playerPage)
+}, playerScroll)
 round(specBtn, 6)
 
 local playerStatus = make("TextLabel", {
 	Size = UDim2.new(1, 0, 0, 18),
-	Position = UDim2.new(0, 0, 0, 96),
+	Position = UDim2.new(0, 0, 0, 162),
 	BackgroundTransparency = 1,
 	Font = Enum.Font.Gotham,
 	TextSize = 12,
 	TextColor3 = COL.sub,
 	Text = "",
 	TextXAlignment = Enum.TextXAlignment.Left,
-}, playerPage)
+}, playerScroll)
 
 connect(tpBtn.MouseButton1Click, function()
 	click()
@@ -1858,6 +1870,279 @@ connect(specBtn.MouseButton1Click, function()
 			playerStatus.Text = "No character to spectate"
 		end
 	end
+end)
+
+-- ---------------- carry / focus actions ----------------
+-- Each one positions YOUR character relative to the target, so they're FE-safe (you only ever
+-- move yourself). Head Sit / Backpack / Focus TP are toggles that share one RenderStepped loop
+-- -- picking one cancels the others -- while Behind is a single hop. A target that goes missing
+-- or leaves drops the active mode.
+local headBtn = make("TextButton", {
+	Size = UDim2.new(0.5, -4, 0, 28),
+	Position = UDim2.new(0, 0, 0, 96),
+	BackgroundColor3 = COL.accent,
+	Font = Enum.Font.GothamMedium,
+	TextSize = 13,
+	TextColor3 = Color3.new(1, 1, 1),
+	Text = "Head Sit",
+	AutoButtonColor = false,
+	BorderSizePixel = 0,
+}, playerScroll)
+round(headBtn, 6)
+
+local backBtn = make("TextButton", {
+	Size = UDim2.new(0.5, -4, 0, 28),
+	Position = UDim2.new(0.5, 4, 0, 96),
+	BackgroundColor3 = COL.accent,
+	Font = Enum.Font.GothamMedium,
+	TextSize = 13,
+	TextColor3 = Color3.new(1, 1, 1),
+	Text = "Backpack",
+	AutoButtonColor = false,
+	BorderSizePixel = 0,
+}, playerScroll)
+round(backBtn, 6)
+
+local focusBtn = make("TextButton", {
+	Size = UDim2.new(0.5, -4, 0, 28),
+	Position = UDim2.new(0, 0, 0, 128),
+	BackgroundColor3 = COL.accent,
+	Font = Enum.Font.GothamMedium,
+	TextSize = 13,
+	TextColor3 = Color3.new(1, 1, 1),
+	Text = "Focus TP",
+	AutoButtonColor = false,
+	BorderSizePixel = 0,
+}, playerScroll)
+round(focusBtn, 6)
+
+local behindBtn = make("TextButton", {
+	Size = UDim2.new(0.5, -4, 0, 28),
+	Position = UDim2.new(0.5, 4, 0, 128),
+	BackgroundColor3 = COL.accent,
+	Font = Enum.Font.GothamMedium,
+	TextSize = 13,
+	TextColor3 = Color3.new(1, 1, 1),
+	Text = "Behind",
+	AutoButtonColor = false,
+	BorderSizePixel = 0,
+}, playerScroll)
+round(behindBtn, 6)
+
+local carryMode, carryTarget = nil, nil
+
+-- pose played on YOUR character while a stick-mode runs. Action priority so it wins over the
+-- default idle/walk without having to disable the Animate script. Swap CARRY_ANIM for a sit
+-- animation id if you want a literal sit; this reuses a known-good floaty pose by default.
+local CARRY_ANIM = "rbxassetid://10714347256"
+local carryTrack
+local function ensureCarryAnim(on)
+	if on then
+		local hum = player.Character and player.Character:FindFirstChildOfClass("Humanoid")
+		if not hum then
+			return
+		end
+		if carryTrack and carryTrack.IsPlaying then
+			return
+		end
+		carryTrack = nil
+		local anim = Instance.new("Animation")
+		anim.AnimationId = CARRY_ANIM
+		local ok, track = pcall(function()
+			return hum:LoadAnimation(anim)
+		end)
+		if ok and track then
+			track.Looped = true
+			track.Priority = Enum.AnimationPriority.Action
+			track:Play(0.15)
+			carryTrack = track
+		end
+	elseif carryTrack then
+		pcall(function()
+			carryTrack:Stop(0.15)
+		end)
+		carryTrack = nil
+	end
+end
+
+-- respawning drops the track; replay it if a mode is still active
+connect(player.CharacterAdded, function()
+	if carryMode then
+		task.wait(0.3)
+		if carryMode then
+			ensureCarryAnim(true)
+		end
+	end
+end)
+
+local function updateCarryLabels()
+	headBtn.Text = carryMode == "head" and "Stop Head" or "Head Sit"
+	backBtn.Text = carryMode == "back" and "Stop Back" or "Backpack"
+	focusBtn.Text = carryMode == "focus" and "Stop Focus" or "Focus TP"
+end
+
+local function setCarry(mode)
+	local target = findPlayer(playerBox.Text) or selectedPlayer
+	if not target then
+		playerStatus.Text = "Player not found"
+		return
+	end
+	if carryMode == mode then
+		carryMode, carryTarget = nil, nil
+		ensureCarryAnim(false)
+		playerStatus.Text = "Stopped"
+	else
+		carryMode, carryTarget = mode, target
+		ensureCarryAnim(true)
+		playerStatus.Text = mode .. " -> " .. target.Name
+	end
+	updateCarryLabels()
+end
+
+-- shared loop: one hub-managed connection that no-ops while off, so it dies on unload and
+-- never fights the normal teleport button
+connect(RunService.RenderStepped, function()
+	if not carryMode then
+		return
+	end
+	local target = carryTarget
+	local thrp = target and target.Character and target.Character:FindFirstChild("HumanoidRootPart")
+	local mhrp = player.Character and player.Character:FindFirstChild("HumanoidRootPart")
+	if not thrp or not mhrp or target.Parent ~= Players then
+		carryMode, carryTarget = nil, nil
+		ensureCarryAnim(false)
+		updateCarryLabels()
+		return
+	end
+	local off
+	if carryMode == "head" then
+		off = CFrame.new(0, 3.2, 0) -- perched on their head
+	elseif carryMode == "back" then
+		off = CFrame.new(0, 0.4, 1.6) -- riding their back
+	else
+		off = CFrame.new(0, 0, 4) -- trailing a few studs behind
+	end
+	-- match their velocity + a small lead so you stick tight instead of chasing a frame behind,
+	-- and zero your own physics so the humanoid never drags you off the mark
+	local vel = thrp.AssemblyLinearVelocity
+	mhrp.CFrame = (thrp.CFrame * off) + vel * 0.03
+	mhrp.AssemblyLinearVelocity = vel
+end)
+
+connect(headBtn.MouseButton1Click, function()
+	click()
+	setCarry("head")
+end)
+connect(backBtn.MouseButton1Click, function()
+	click()
+	setCarry("back")
+end)
+connect(focusBtn.MouseButton1Click, function()
+	click()
+	setCarry("focus")
+end)
+connect(behindBtn.MouseButton1Click, function()
+	click()
+	local target = findPlayer(playerBox.Text) or selectedPlayer
+	local thrp = target and target.Character and target.Character:FindFirstChild("HumanoidRootPart")
+	local mhrp = player.Character and player.Character:FindFirstChild("HumanoidRootPart")
+	if thrp and mhrp then
+		mhrp.CFrame = thrp.CFrame * CFrame.new(0, 0, 2.5) -- one hop directly behind them
+		playerStatus.Text = "Behind " .. target.Name
+	else
+		playerStatus.Text = "Player not found"
+	end
+end)
+
+-- ---------------- coordinate teleport ----------------
+-- Supply raw X / Y / Z and jump there. "Get" fills the boxes with where you're standing now,
+-- so you can grab a spot, walk off, and hop back.
+make("TextLabel", {
+	Size = UDim2.new(1, 0, 0, 16),
+	Position = UDim2.new(0, 0, 0, 186),
+	BackgroundTransparency = 1,
+	Font = Enum.Font.GothamMedium,
+	TextSize = 12,
+	TextColor3 = COL.sub,
+	Text = "Teleport to coords",
+	TextXAlignment = Enum.TextXAlignment.Left,
+}, playerScroll)
+
+local function coordBox(xScale, xOff, placeholder)
+	local b = make("TextBox", {
+		Size = UDim2.new(0.333, -4, 0, 26),
+		Position = UDim2.new(xScale, xOff, 0, 206),
+		BackgroundColor3 = COL.element,
+		Font = Enum.Font.Gotham,
+		TextSize = 13,
+		TextColor3 = COL.text,
+		PlaceholderText = placeholder,
+		PlaceholderColor3 = COL.sub,
+		ClearTextOnFocus = false,
+		BorderSizePixel = 0,
+		Text = "",
+	}, playerScroll)
+	round(b, 6)
+	return b
+end
+local xBox = coordBox(0, 0, "X")
+local yBox = coordBox(0.333, 2, "Y")
+local zBox = coordBox(0.666, 4, "Z")
+
+local coordTpBtn = make("TextButton", {
+	Size = UDim2.new(0.62, -4, 0, 28),
+	Position = UDim2.new(0, 0, 0, 238),
+	BackgroundColor3 = COL.accent,
+	Font = Enum.Font.GothamMedium,
+	TextSize = 13,
+	TextColor3 = Color3.new(1, 1, 1),
+	Text = "TP to Coords",
+	AutoButtonColor = false,
+	BorderSizePixel = 0,
+}, playerScroll)
+round(coordTpBtn, 6)
+
+local getPosBtn = make("TextButton", {
+	Size = UDim2.new(0.38, -4, 0, 28),
+	Position = UDim2.new(0.62, 4, 0, 238),
+	BackgroundColor3 = COL.element,
+	Font = Enum.Font.GothamMedium,
+	TextSize = 13,
+	TextColor3 = COL.text,
+	Text = "Get",
+	AutoButtonColor = false,
+	BorderSizePixel = 0,
+}, playerScroll)
+round(getPosBtn, 6)
+
+connect(getPosBtn.MouseButton1Click, function()
+	click()
+	local hrp = player.Character and player.Character:FindFirstChild("HumanoidRootPart")
+	if not hrp then
+		playerStatus.Text = "No character"
+		return
+	end
+	local p = hrp.Position
+	xBox.Text = string.format("%.1f", p.X)
+	yBox.Text = string.format("%.1f", p.Y)
+	zBox.Text = string.format("%.1f", p.Z)
+	playerStatus.Text = "Filled current pos"
+end)
+
+connect(coordTpBtn.MouseButton1Click, function()
+	click()
+	local hrp = player.Character and player.Character:FindFirstChild("HumanoidRootPart")
+	if not hrp then
+		playerStatus.Text = "No character"
+		return
+	end
+	local x, y, z = tonumber(xBox.Text), tonumber(yBox.Text), tonumber(zBox.Text)
+	if not (x and y and z) then
+		playerStatus.Text = "Enter X, Y and Z"
+		return
+	end
+	hrp.CFrame = CFrame.new(x, y, z)
+	playerStatus.Text = string.format("TP'd to %.0f, %.0f, %.0f", x, y, z)
 end)
 
 H.findPlayer = findPlayer
@@ -2111,7 +2396,7 @@ round(flyBox, 6)
 connect(flyBox.FocusLost, function()
 	local n = tonumber(flyBox.Text)
 	if n then
-		flightSpeed = math.clamp(n, -50000000, FLY_MAX_SPEED)
+		flightSpeed = math.clamp(n, 0, FLY_MAX_SPEED)
 	end
 	flyBox.Text = tostring(flightSpeed)
 end)
@@ -2120,7 +2405,7 @@ end)
 local function doSfly(arg)
 	local n = tonumber(arg)
 	if n then
-		flightSpeed = math.clamp(n, -50000000, FLY_MAX_SPEED)
+		flightSpeed = math.clamp(n, 0, FLY_MAX_SPEED)
 		flyBox.Text = tostring(flightSpeed)
 		if not flyEnabled then
 			toggleFly()
@@ -2201,7 +2486,7 @@ H.Fly = {
 		return flightSpeed
 	end,
 	setSpeed = function(v)
-		flightSpeed = math.clamp(v, -50000000, FLY_MAX_SPEED)
+		flightSpeed = math.clamp(v, 0, FLY_MAX_SPEED)
 		flyBox.Text = tostring(flightSpeed)
 	end,
 }
