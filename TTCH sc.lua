@@ -384,6 +384,87 @@ H.makeDraggable = function(frame, handle, conn)
 	return frame
 end
 
+-- Board-style window chrome: a round yellow "minimize" pill and a round red "close" pill in
+-- the top-right, matching the standalone scripts. Minimize HIDES every other child of the
+-- frame (recording which were visible so it restores exactly) and shrinks the frame to its
+-- header; that also hides the resize grip, so a minimized window can't be resized. Unminimize
+-- puts everything back. Close runs opts.onClose if given, else destroys the frame. Applied to
+-- every secondary window; the main UI keeps its own bottom-bar controls.
+--   opts.header   collapsed height in px (default 38)
+--   opts.onClose  custom close (default frame:Destroy())
+--   opts.minimize set false to show only the close pill
+--   opts.title    a child (the title label) to keep visible while minimized
+H.chrome = function(frame, opts)
+	opts = opts or {}
+	local headerH = opts.header or 38
+
+	-- close pill first so the minimize handler below can exclude it from the hide sweep
+	local closeBtn = make("TextButton", {
+		Name = "Close",
+		Size = UDim2.new(0, 18, 0, 18),
+		Position = UDim2.new(1, -27, 0, 9),
+		BackgroundColor3 = Color3.fromRGB(225, 65, 65),
+		Text = "",
+		AutoButtonColor = false,
+		BorderSizePixel = 0,
+		ZIndex = 10,
+	}, frame)
+	round(closeBtn, 9)
+	connect(closeBtn.MouseButton1Click, function()
+		click()
+		if opts.onClose then
+			opts.onClose()
+		else
+			frame:Destroy()
+		end
+	end)
+
+	local minBtn
+	if opts.minimize ~= false then
+		minBtn = make("TextButton", {
+			Name = "Minimize",
+			Size = UDim2.new(0, 18, 0, 18),
+			Position = UDim2.new(1, -49, 0, 9),
+			BackgroundColor3 = Color3.fromRGB(235, 190, 45),
+			Text = "",
+			AutoButtonColor = false,
+			BorderSizePixel = 0,
+			ZIndex = 10,
+		}, frame)
+		round(minBtn, 9)
+
+		local collapsed, saved, hidden = false, nil, {}
+		connect(minBtn.MouseButton1Click, function()
+			click()
+			collapsed = not collapsed
+			if collapsed then
+				saved = frame.Size
+				hidden = {}
+				-- hide every visible GuiObject child except the two pills and the title label
+				-- (UICorner/UIStroke aren't GuiObjects, so the rounded border stays); remember
+				-- what we hid so unminimize restores exactly those
+				for _, ch in ipairs(frame:GetChildren()) do
+					if ch ~= minBtn and ch ~= closeBtn and ch ~= opts.title
+						and ch:IsA("GuiObject") and ch.Visible
+					then
+						hidden[#hidden + 1] = ch
+						ch.Visible = false
+					end
+				end
+				frame.Size = UDim2.new(frame.Size.X.Scale, frame.Size.X.Offset, 0, headerH)
+			else
+				for _, ch in ipairs(hidden) do
+					ch.Visible = true
+				end
+				hidden = {}
+				frame.Size = saved
+			end
+		end)
+	end
+
+	return minBtn, closeBtn
+end
+
 
 -- title bar
 local titleBar = make("Frame", { Size = UDim2.new(1, 0, 0, 36), BackgroundTransparency = 1 }, main)
@@ -692,11 +773,26 @@ do
 	end)
 	Games.default["Game Specific"] = true
 
-	-- register a game tab (hidden until game mode); returns its page to build on
-	function Games.add(name)
-		local page = makeTab(name)
-		tabs[name].Visible = false
-		Games.tabs[#Games.tabs + 1] = name
+	-- Register a game tab from a place ID. The tab name is pulled off that ID at runtime
+	-- (MarketplaceService) so it always matches the real game; the fetch runs in task.spawn
+	-- so it never blocks hub load. `fallback` is the label shown until/unless the name
+	-- resolves. Returns the page to build on. The tab's key is the place ID as a string.
+	function Games.add(placeId, fallback)
+		local key = tostring(placeId)
+		local page = makeTab(key, nil, fallback or ("Game " .. key))
+		tabs[key].Visible = false
+		tabs[key].TextTruncate = Enum.TextTruncate.AtEnd -- long game names don't overflow the tab
+		Games.tabs[#Games.tabs + 1] = key
+		if tonumber(placeId) and tonumber(placeId) > 0 then
+			task.spawn(function()
+				local ok, info = pcall(function()
+					return game:GetService("MarketplaceService"):GetProductInfo(placeId)
+				end)
+				if ok and type(info) == "table" and info.Name and tabs[key] then
+					tabs[key].Text = info.Name
+				end
+			end)
+		end
 		return page
 	end
 
@@ -760,27 +856,26 @@ do
 		return sec, btn
 	end
 
-	-- ---- example game: MicUp ----
-	-- Placeholder sections + buttons. Swap the notify() calls for real MicUp actions.
+	-- ---- game tabs ----
+	-- Supply each game's place ID here; the tab is named from it (see Games.add). The fallback
+	-- label shows until the name resolves, or if the ID is left at 0.
+	local MICUP_PLACE_ID = 0 -- TODO: set to MIC UP's place ID
 	do
-		local sec, btn = sectioned(Games.add("MicUp"))
+		local sec, btn = sectioned(Games.add(MICUP_PLACE_ID, "MicUp"))
+
+		sec("Misc")
+		btn("Board Watcher", function()
+			H.runCommand("boardnotifier") -- toggles the themed board notifier
+		end)
 
 		sec("Main")
 		btn("Example button", function()
 			H.notify({ title = "MicUp", text = "Example button pressed", kind = "success" })
 		end)
-		btn("Another button", function()
-			H.notify({ title = "MicUp", text = "Another button pressed" })
-		end)
-
-		sec("Auto")
-		btn("Auto example", function()
-			H.notify({ title = "MicUp", text = "Auto example pressed" })
-		end)
 	end
 
 	-- share so later feature blocks can add game tabs / switch modes:
-	--   local page = H.Games.add("GameName"); then build sections/buttons on `page`
+	--   local page = H.Games.add(placeId, "Fallback"); then build sections/buttons on `page`
 	H.Games = Games
 end
 
@@ -3783,22 +3878,13 @@ local setTitle = make("TextLabel", {
 }, setFrame)
 setTitle.Active = true
 
-local setClose = make("TextButton", {
-	Size = UDim2.new(0, 24, 0, 24),
-	Position = UDim2.new(1, -30, 0, 6),
-	BackgroundColor3 = COL.on,
-	Font = Enum.Font.GothamBold,
-	TextSize = 13,
-	TextColor3 = Color3.new(1, 1, 1),
-	Text = "X",
-	AutoButtonColor = false,
-	BorderSizePixel = 0,
-}, setFrame)
-round(setClose, 6)
-connect(setClose.MouseButton1Click, function()
-	click()
-	setFrame.Visible = false
-end)
+local _, setCloseBtn = H.chrome(setFrame, {
+	header = 38,
+	title = setTitle,
+	onClose = function()
+		setFrame.Visible = false
+	end,
+})
 
 connect(cogBtn.MouseButton1Click, function()
 	click()
@@ -3873,6 +3959,14 @@ picker.title = make("TextLabel", {
 	ZIndex = 5,
 }, picker.frame)
 picker.title.Active = true
+
+H.chrome(picker.frame, {
+	header = 28,
+	title = picker.title,
+	onClose = function()
+		picker.frame.Visible = false
+	end,
+})
 
 -- SV square: hue-coloured base, white gradient across X (saturation),
 -- black gradient down Y (value). Overlays are parented inline to save locals.
@@ -4105,7 +4199,7 @@ H.makeDraggable(picker.frame, picker.title)
 
 -- hiding the settings panel takes the picker with it (extra handlers: the originals were
 -- created before `picker` existed, so they can't see it)
-connect(setClose.MouseButton1Click, function()
+connect(setCloseBtn.MouseButton1Click, function()
 	picker.frame.Visible = false
 end)
 connect(cogBtn.MouseButton1Click, function()
@@ -4848,22 +4942,7 @@ local function window(name, title, w, h)
 	}, f)
 	bar.Active = true
 
-	local x = make("TextButton", {
-		Size = UDim2.new(0, 26, 0, 26),
-		Position = UDim2.new(1, -32, 0, 6),
-		BackgroundColor3 = COL.on,
-		Font = Enum.Font.GothamBold,
-		TextSize = 13,
-		TextColor3 = Color3.new(1, 1, 1),
-		Text = "X",
-		AutoButtonColor = false,
-		BorderSizePixel = 0,
-	}, f)
-	round(x, 6)
-	connect(x.MouseButton1Click, function()
-		click()
-		f:Destroy()
-	end)
+	H.chrome(f, { header = 38, title = bar })
 
 	local body = make("Frame", {
 		Size = UDim2.new(1, -20, 1, -46),
@@ -5424,7 +5503,9 @@ Extra.openPlayers = function()
 
 	local function addRow(p, i)
 		local rf = make("Frame", {
-			Size = UDim2.new(1, -6, 0, 54),
+			-- 60, not 54: the ID label runs to y36 and the action buttons sit at y36+, so the
+			-- extra height keeps the buttons from overlapping the ID text
+			Size = UDim2.new(1, -6, 0, 60),
 			BackgroundColor3 = COL.element,
 			BorderSizePixel = 0,
 			LayoutOrder = i,
@@ -6112,22 +6193,7 @@ local function listWindow(name, title, rows)
 	}, f)
 	bar.Active = true
 
-	local x = make("TextButton", {
-		Size = UDim2.new(0, 26, 0, 26),
-		Position = UDim2.new(1, -32, 0, 6),
-		BackgroundColor3 = COL.on,
-		Font = Enum.Font.GothamBold,
-		TextSize = 13,
-		TextColor3 = Color3.new(1, 1, 1),
-		Text = "X",
-		AutoButtonColor = false,
-		BorderSizePixel = 0,
-	}, f)
-	round(x, 6)
-	connect(x.MouseButton1Click, function()
-		click()
-		f:Destroy()
-	end)
+	H.chrome(f, { header = 38, title = bar })
 
 	local sc = make("ScrollingFrame", {
 		Size = UDim2.new(1, -20, 1, -48),
@@ -6362,28 +6428,21 @@ local function openClickTp()
 
 	title.Active = true
 
-	local close = make("TextButton", {
-		Size = UDim2.new(0, 25, 0, 25),
-		Position = UDim2.new(1, -30, 0, 5),
-		Text = "X",
-		BackgroundColor3 = COL.on,
-		TextColor3 = Color3.new(1, 1, 1),
-		BorderSizePixel = 0,
-	}, frame)
-
-	round(close, 6)
-
-	close.MouseButton1Click:Connect(function()
-		-- settings survive in ClickTp; persist them so a rejoin keeps them too
-		pcall(hubSaveConfig)
-		-- full teardown, not a bare Destroy: the old version left the UIS listeners
-		-- connected, so a closed window still teleported you on the keybind
-		if _G.ClickTpCleanup then
-			_G.ClickTpCleanup()
-		else
-			clickGui:Destroy()
-		end
-	end)
+	H.chrome(frame, {
+		header = 38,
+		title = title,
+		onClose = function()
+			-- settings survive in ClickTp; persist them so a rejoin keeps them too
+			pcall(hubSaveConfig)
+			-- full teardown, not a bare Destroy: the old version left the UIS listeners
+			-- connected, so a closed window still teleported you on the keybind
+			if _G.ClickTpCleanup then
+				_G.ClickTpCleanup()
+			else
+				clickGui:Destroy()
+			end
+		end,
+	})
 
 	-- opens showing whatever it was left on
 	local toggle = make("TextButton", {
@@ -7164,18 +7223,14 @@ local function openBoardNotifier()
 	}, win)
 	bar.Active = true
 
-	local closeX = make("TextButton", {
-		Size = UDim2.new(0, 26, 0, 26),
-		Position = UDim2.new(1, -32, 0, 6),
-		BackgroundColor3 = COL.on,
-		Font = Enum.Font.GothamBold,
-		TextSize = 13,
-		TextColor3 = Color3.new(1, 1, 1),
-		Text = "X",
-		AutoButtonColor = false,
-		BorderSizePixel = 0,
-	}, win)
-	round(closeX, 6)
+	-- board-style yellow minimize + red close; close toggles the notifier back off
+	H.chrome(win, {
+		header = 40,
+		title = bar,
+		onClose = function()
+			openBoardNotifier()
+		end,
+	})
 
 	local currentLabel = make("TextLabel", {
 		Size = UDim2.new(1, -20, 0, 48),
@@ -7271,23 +7326,15 @@ local function openBoardNotifier()
 		}, logsWin)
 		logsBar.Active = true
 
-		local logsX = make("TextButton", {
-			Size = UDim2.new(0, 26, 0, 26),
-			Position = UDim2.new(1, -32, 0, 6),
-			BackgroundColor3 = COL.on,
-			Font = Enum.Font.GothamBold,
-			TextSize = 13,
-			TextColor3 = Color3.new(1, 1, 1),
-			Text = "X",
-			AutoButtonColor = false,
-			BorderSizePixel = 0,
-		}, logsWin)
-		round(logsX, 6)
-		track(connect(logsX.MouseButton1Click, function()
-			click()
-			logsShown = false
-			logsWin.Visible = false
-		end))
+		-- close just hides the logs window (the notifier keeps running); plus minimize
+		H.chrome(logsWin, {
+			header = 40,
+			title = logsBar,
+			onClose = function()
+				logsShown = false
+				logsWin.Visible = false
+			end,
+		})
 
 		logScroll = make("ScrollingFrame", {
 			Size = UDim2.new(1, -20, 1, -44),
@@ -7335,11 +7382,6 @@ local function openBoardNotifier()
 	end
 
 	-- ---- behaviour ----
-	track(connect(closeX.MouseButton1Click, function()
-		click()
-		openBoardNotifier() -- toggles closed, disconnecting via the localConns cleanup below
-	end))
-
 	track(connect(toggleBtn.MouseButton1Click, function()
 		click()
 		toggled = not toggled
