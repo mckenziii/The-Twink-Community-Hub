@@ -489,7 +489,10 @@ local tabLayout = make("UIListLayout", {
 }, tabStrip)
 
 local tabOrder = 0
-local function makeTab(name)
+-- name    : unique key into pages/tabs (what selectTab/showTab address)
+-- onClick : optional override; without it the tab just shows its own page
+-- display : optional button label when it should differ from the key (game tabs use this)
+local function makeTab(name, onClick, display)
 	tabOrder += 1
 	local btn = make("TextButton", {
 		Size = UDim2.new(0, TAB_WIDTH, 0, 26),
@@ -497,7 +500,7 @@ local function makeTab(name)
 		Font = Enum.Font.GothamMedium,
 		TextSize = 11,
 		TextColor3 = COL.sub,
-		Text = name,
+		Text = display or name,
 		AutoButtonColor = false,
 		BorderSizePixel = 0,
 		LayoutOrder = tabOrder,
@@ -525,7 +528,11 @@ local function makeTab(name)
 
 	connect(btn.MouseButton1Click, function()
 		click()
-		selectTab(name)
+		if onClick then
+			onClick(name)
+		else
+			selectTab(name)
+		end
 	end)
 	return page
 end
@@ -622,6 +629,159 @@ local function makeSwitch(parent, y, initial, onChanged)
 			render()
 		end
 	end, toggle
+end
+
+-- ===== game-specific tab modes =====
+-- A "Game Specific" tab sits in the normal strip. Clicking it hides the default tabs and
+-- reveals the game tabs (MicUp for now) plus a Back tab that restores the defaults. Each game
+-- tab is an ordinary page filled with sections + buttons. Toggled through the tab buttons'
+-- .Visible -- UIListLayout skips invisible items, so the strip reflows with no gaps -- while
+-- selectTab still drives which page shows. Wrapped in do..end so its locals free their
+-- registers afterwards (see the World-tab note about Lua's 200-local cap).
+do
+	local Games = { default = {}, tabs = {} } -- tabs = ordered list of game tab keys
+
+	-- snapshot the current tabs as the default set (game tabs are added below)
+	for n in pairs(pages) do
+		Games.default[n] = true
+	end
+
+	local function showTab(name, vis)
+		local b = tabs[name]
+		if b then
+			b.Visible = vis
+		end
+	end
+
+	function Games.enter()
+		for n in pairs(Games.default) do
+			showTab(n, false)
+		end
+		showTab("Back", true)
+		for _, n in ipairs(Games.tabs) do
+			showTab(n, true)
+		end
+		if Games.tabs[1] then
+			selectTab(Games.tabs[1])
+		end
+		tabStrip.CanvasPosition = Vector2.new(0, 0)
+	end
+
+	function Games.exit()
+		showTab("Back", false)
+		for _, n in ipairs(Games.tabs) do
+			showTab(n, false)
+		end
+		for n in pairs(Games.default) do
+			showTab(n, true)
+		end
+		selectTab("Speed") -- the first default tab
+		tabStrip.CanvasPosition = Vector2.new(0, 0)
+	end
+
+	-- Back tab: hidden until you enter game mode; pinned leftmost when shown
+	makeTab("Back", function()
+		Games.exit()
+	end)
+	tabs["Back"].Visible = false
+	tabs["Back"].LayoutOrder = -1
+
+	-- "Game Specific" entry tab: lives in the default strip and opens game mode on click
+	makeTab("Game Specific", function()
+		Games.enter()
+	end)
+	Games.default["Game Specific"] = true
+
+	-- register a game tab (hidden until game mode); returns its page to build on
+	function Games.add(name)
+		local page = makeTab(name)
+		tabs[name].Visible = false
+		Games.tabs[#Games.tabs + 1] = name
+		return page
+	end
+
+	-- Build a scrolling, sectioned list on a page: sec("Header") then btn("Label", fn).
+	-- Same look as the Tools tab, so game pages match the rest of the hub.
+	local function sectioned(page)
+		local scroll = make("ScrollingFrame", {
+			Size = UDim2.new(1, 0, 1, 0),
+			BackgroundTransparency = 1,
+			BorderSizePixel = 0,
+			ScrollBarThickness = 4,
+			ScrollBarImageColor3 = COL.sub,
+			CanvasSize = UDim2.new(0, 0, 0, 0),
+		}, page)
+		local layout = make("UIListLayout", {
+			Padding = UDim.new(0, 6),
+			SortOrder = Enum.SortOrder.LayoutOrder,
+		}, scroll)
+		connect(layout:GetPropertyChangedSignal("AbsoluteContentSize"), function()
+			scroll.CanvasSize = UDim2.new(0, 0, 0, layout.AbsoluteContentSize.Y + 6)
+		end)
+		local ord = 0
+		local function sec(text)
+			ord += 1
+			make("TextLabel", {
+				Size = UDim2.new(1, -6, 0, 18),
+				BackgroundTransparency = 1,
+				Font = Enum.Font.GothamBold,
+				TextSize = 11,
+				TextColor3 = COL.sub,
+				Text = string.upper(text),
+				TextXAlignment = Enum.TextXAlignment.Left,
+				LayoutOrder = ord,
+			}, scroll)
+		end
+		local function btn(text, fn)
+			ord += 1
+			local b = make("TextButton", {
+				Size = UDim2.new(1, -6, 0, 28),
+				BackgroundColor3 = COL.element,
+				Font = Enum.Font.GothamMedium,
+				TextSize = 13,
+				TextColor3 = COL.text,
+				Text = text,
+				AutoButtonColor = true,
+				BorderSizePixel = 0,
+				LayoutOrder = ord,
+			}, scroll)
+			round(b, 6)
+			connect(b.MouseButton1Click, function()
+				click()
+				if fn then
+					local ok, err = pcall(fn)
+					if not ok then
+						warn("[MicUp] " .. tostring(err))
+					end
+				end
+			end)
+			return b
+		end
+		return sec, btn
+	end
+
+	-- ---- example game: MicUp ----
+	-- Placeholder sections + buttons. Swap the notify() calls for real MicUp actions.
+	do
+		local sec, btn = sectioned(Games.add("MicUp"))
+
+		sec("Main")
+		btn("Example button", function()
+			H.notify({ title = "MicUp", text = "Example button pressed", kind = "success" })
+		end)
+		btn("Another button", function()
+			H.notify({ title = "MicUp", text = "Another button pressed" })
+		end)
+
+		sec("Auto")
+		btn("Auto example", function()
+			H.notify({ title = "MicUp", text = "Auto example pressed" })
+		end)
+	end
+
+	-- share so later feature blocks can add game tabs / switch modes:
+	--   local page = H.Games.add("GameName"); then build sections/buttons on `page`
+	H.Games = Games
 end
 
 -- ---- publish the core surface ----
@@ -2958,6 +3118,7 @@ end -- World scope
 do
 -- pulled out of H once, so the body below uses fast locals
 local connect, COL, make, round, click, toolsPage = H.connect, H.COL, H.make, H.round, H.click, H.toolsPage
+local player = H.player
 local toolsScroll = make("ScrollingFrame", {
 	Size = UDim2.new(1, 0, 1, 0),
 	Position = UDim2.new(0, 0, 0, 0),
@@ -3087,6 +3248,28 @@ local toolDefs = {
 	},
 }
 
+-- Fab tools drop a build into the workspace; we don't know its name ahead of time, so
+-- while a Fab runs we watch workspace for new top-level children and remember them. That
+-- gives "Delete All Fabs" an exact list to tear down without guessing at map objects.
+local spawnedFabs = {}
+
+local function runTool(def)
+	if not (def.name and string.find(def.name, "Fab")) then
+		return pcall(def.run) -- ordinary tool: just run it
+	end
+	-- record anything parented straight under workspace for a few seconds after the click
+	local conn = connect(workspace.ChildAdded, function(child)
+		spawnedFabs[#spawnedFabs + 1] = child
+	end)
+	local ok, err = pcall(def.run)
+	task.delay(5, function()
+		pcall(function()
+			conn:Disconnect()
+		end)
+	end)
+	return ok, err
+end
+
 for i = 1, slots do
 	local def = toolDefs[i]
 	local b = make("TextButton", {
@@ -3104,13 +3287,142 @@ for i = 1, slots do
 	connect(b.MouseButton1Click, function()
 		click()
 		if def and def.run then
-			local ok, err = pcall(def.run)
+			local ok, err = runTool(def)
 			if not ok then
 				warn("[Tools] " .. tostring(def.name) .. " failed: " .. tostring(err))
 			end
 		end
 	end)
 end
+
+-- ---------------- inventory / fab management ----------------
+-- your Tools live in the Backpack (unequipped) and the Character (the equipped one), so
+-- both get swept. Fabs are handled separately via the spawnedFabs list built above.
+local function eachTool(fn)
+	local n = 0
+	local function sweep(container)
+		if not container then
+			return
+		end
+		for _, t in ipairs(container:GetChildren()) do
+			if t:IsA("Tool") and fn(t) then
+				pcall(function()
+					t:Destroy()
+				end)
+				n += 1
+			end
+		end
+	end
+	sweep(player:FindFirstChildOfClass("Backpack"))
+	sweep(player.Character)
+	return n
+end
+
+local function plural(n)
+	return n == 1 and "" or "s"
+end
+
+-- header to visually separate the actions from the tool list
+make("TextLabel", {
+	Size = UDim2.new(1, -6, 0, 18),
+	BackgroundTransparency = 1,
+	Font = Enum.Font.GothamBold,
+	TextSize = 11,
+	TextColor3 = COL.sub,
+	Text = "MANAGE",
+	TextXAlignment = Enum.TextXAlignment.Left,
+	LayoutOrder = slots + 1,
+}, toolsScroll)
+
+local removeAllBtn = make("TextButton", {
+	Size = UDim2.new(1, -6, 0, 28),
+	BackgroundColor3 = COL.element,
+	Font = Enum.Font.GothamMedium,
+	TextSize = 13,
+	TextColor3 = COL.text,
+	Text = "Remove All Tools",
+	AutoButtonColor = true,
+	BorderSizePixel = 0,
+	LayoutOrder = slots + 2,
+}, toolsScroll)
+round(removeAllBtn, 6)
+connect(removeAllBtn.MouseButton1Click, function()
+	click()
+	local n = eachTool(function()
+		return true
+	end)
+	H.notify({
+		title = "Tools",
+		text = "Removed " .. n .. " tool" .. plural(n) .. " from your inventory.",
+		kind = n > 0 and "success" or "warn",
+	})
+end)
+
+local deleteFabsBtn = make("TextButton", {
+	Size = UDim2.new(1, -6, 0, 28),
+	BackgroundColor3 = COL.element,
+	Font = Enum.Font.GothamMedium,
+	TextSize = 13,
+	TextColor3 = COL.text,
+	Text = "Delete All Fabs",
+	AutoButtonColor = true,
+	BorderSizePixel = 0,
+	LayoutOrder = slots + 3,
+}, toolsScroll)
+round(deleteFabsBtn, 6)
+connect(deleteFabsBtn.MouseButton1Click, function()
+	click()
+	local n = 0
+	for _, inst in ipairs(spawnedFabs) do
+		if inst and inst.Parent then
+			pcall(function()
+				inst:Destroy()
+			end)
+			n += 1
+		end
+	end
+	table.clear(spawnedFabs)
+	H.notify({
+		title = "Tools",
+		text = n > 0 and ("Deleted " .. n .. " fab" .. plural(n) .. ".") or "No spawned fabs to delete.",
+		kind = n > 0 and "success" or "warn",
+	})
+end)
+
+-- type a tool name and press Enter to remove just that one (case-insensitive)
+local removeBox = make("TextBox", {
+	Size = UDim2.new(1, -6, 0, 28),
+	BackgroundColor3 = COL.element,
+	Font = Enum.Font.Gotham,
+	TextSize = 13,
+	TextColor3 = COL.text,
+	PlaceholderText = "tool name to remove...",
+	PlaceholderColor3 = COL.sub,
+	Text = "",
+	ClearTextOnFocus = false,
+	BorderSizePixel = 0,
+	LayoutOrder = slots + 4,
+}, toolsScroll)
+round(removeBox, 6)
+connect(removeBox.FocusLost, function(enter)
+	if not enter then
+		return
+	end
+	local name = removeBox.Text:gsub("^%s+", ""):gsub("%s+$", "")
+	removeBox.Text = ""
+	if name == "" then
+		return
+	end
+	local target = name:lower()
+	local n = eachTool(function(t)
+		return t.Name:lower() == target
+	end)
+	H.notify({
+		title = "Tools",
+		text = n > 0 and ("Removed '" .. name .. "' x" .. n) or ("No tool named '" .. name .. "' in your inventory."),
+		kind = n > 0 and "success" or "error",
+	})
+end)
 
 -- keep the scroll canvas sized to the button list
 local function sizeToolsCanvas()
@@ -6767,6 +7079,372 @@ local function doFling(target)
 	end)
 	return "flinging " .. target.Name
 end
+
+-- ---------------- Board Notifier ----------------
+-- Ported from the standalone Board Notifier script and dressed in the hub theme: the same
+-- watch / log / change-text behaviour, but built with make()/round()/COL so it repaints on a
+-- theme change like everything else, and wired through connect() so hub Unload tears it down.
+-- Toggles: run the command once to open, again to close.
+--
+-- Game-specific paths (this only does anything in the game the board lives in):
+--   text label  : workspace.map.school.input.activate.title.thing
+--   change input: PlayerGui.map.object.hub.bg.adjust  (holds a TextBox)
+local function openBoardNotifier()
+	-- toggle off if already open
+	local existing = gui:FindFirstChild("BoardNotifier")
+	if existing then
+		existing:Destroy()
+		local logsWin = gui:FindFirstChild("BoardNotifierLogs")
+		if logsWin then
+			logsWin:Destroy()
+		end
+		return "Board Notifier closed"
+	end
+
+	-- safe path walk: return nil rather than erroring when the board isn't in this game
+	local function findText()
+		local node = workspace
+		for _, part in ipairs({ "map", "school", "input", "activate", "title", "thing" }) do
+			node = node and node:FindFirstChild(part)
+		end
+		return node
+	end
+
+	local function findAdjust()
+		local pg = player:FindFirstChildOfClass("PlayerGui")
+		local node = pg
+		for _, part in ipairs({ "map", "object", "hub", "bg", "adjust" }) do
+			node = node and node:FindFirstChild(part)
+		end
+		return node
+	end
+
+	local thing = findText()
+	if not thing then
+		H.notify({ title = "Board Notifier", text = "Board not found in this game.", kind = "error" })
+		return "board not found"
+	end
+
+	local toggled = true
+	local logsShown = false
+	local lastText = tostring(thing.Text)
+	local logOrder = 0
+	local localConns = {} -- disconnect these when the window closes
+
+	-- Registers a connection for the close/unload teardown. Two call styles:
+	--   track(connect(sig, fn))  -- wrap an already-made connection
+	--   track(sig, fn)           -- connect + track in one (also matches makeDraggable's conn arg)
+	local function track(sig, fn)
+		local c = fn and connect(sig, fn) or sig
+		localConns[#localConns + 1] = c
+		return c
+	end
+
+	-- ---- main window ----
+	local win = make("Frame", {
+		Name = "BoardNotifier",
+		Size = UDim2.new(0, 340, 0, 250),
+		Position = UDim2.new(0.5, -170, 0.5, -125),
+		BackgroundColor3 = COL.bg,
+		BorderSizePixel = 0,
+		Active = true,
+	}, gui)
+	round(win, 10)
+	make("UIStroke", { Color = COL.stroke, Thickness = 1 }, win)
+
+	local bar = make("TextLabel", {
+		Size = UDim2.new(1, -44, 0, 34),
+		Position = UDim2.new(0, 14, 0, 2),
+		BackgroundTransparency = 1,
+		Font = Enum.Font.GothamBold,
+		TextSize = 15,
+		TextColor3 = COL.text,
+		Text = "Board Notifier",
+		TextXAlignment = Enum.TextXAlignment.Left,
+	}, win)
+	bar.Active = true
+
+	local closeX = make("TextButton", {
+		Size = UDim2.new(0, 26, 0, 26),
+		Position = UDim2.new(1, -32, 0, 6),
+		BackgroundColor3 = COL.on,
+		Font = Enum.Font.GothamBold,
+		TextSize = 13,
+		TextColor3 = Color3.new(1, 1, 1),
+		Text = "X",
+		AutoButtonColor = false,
+		BorderSizePixel = 0,
+	}, win)
+	round(closeX, 6)
+
+	local currentLabel = make("TextLabel", {
+		Size = UDim2.new(1, -20, 0, 48),
+		Position = UDim2.new(0, 10, 0, 44),
+		BackgroundColor3 = COL.element,
+		BorderSizePixel = 0,
+		Font = Enum.Font.Gotham,
+		TextSize = 13,
+		TextColor3 = COL.text,
+		Text = "Current: " .. lastText,
+		TextWrapped = true,
+		TextXAlignment = Enum.TextXAlignment.Left,
+		TextYAlignment = Enum.TextYAlignment.Center,
+	}, win)
+	round(currentLabel, 6)
+
+	local toggleBtn = make("TextButton", {
+		Size = UDim2.new(0, 155, 0, 36),
+		Position = UDim2.new(0, 10, 0, 102),
+		BackgroundColor3 = COL.accent,
+		BorderSizePixel = 0,
+		Font = Enum.Font.GothamBold,
+		TextSize = 13,
+		TextColor3 = Color3.new(1, 1, 1),
+		Text = "Watcher: ON",
+		AutoButtonColor = false,
+	}, win)
+	round(toggleBtn, 6)
+
+	local getBtn = make("TextButton", {
+		Size = UDim2.new(0, 155, 0, 36),
+		Position = UDim2.new(1, -165, 0, 102),
+		BackgroundColor3 = COL.element,
+		BorderSizePixel = 0,
+		Font = Enum.Font.GothamBold,
+		TextSize = 13,
+		TextColor3 = COL.text,
+		Text = "Get Current Text",
+		AutoButtonColor = false,
+	}, win)
+	round(getBtn, 6)
+
+	local changeBtn = make("TextButton", {
+		Size = UDim2.new(1, -20, 0, 36),
+		Position = UDim2.new(0, 10, 0, 146),
+		BackgroundColor3 = COL.element,
+		BorderSizePixel = 0,
+		Font = Enum.Font.GothamBold,
+		TextSize = 13,
+		TextColor3 = COL.text,
+		Text = "Change Board Text",
+		AutoButtonColor = false,
+	}, win)
+	round(changeBtn, 6)
+
+	local logsBtn = make("TextButton", {
+		Size = UDim2.new(1, -20, 0, 36),
+		Position = UDim2.new(0, 10, 0, 190),
+		BackgroundColor3 = COL.element,
+		BorderSizePixel = 0,
+		Font = Enum.Font.GothamBold,
+		TextSize = 13,
+		TextColor3 = COL.text,
+		Text = "Logs",
+		AutoButtonColor = false,
+	}, win)
+	round(logsBtn, 6)
+
+	-- ---- logs window (built lazily so it shares the theme + drag helpers) ----
+	local logsWin, logScroll
+	local function buildLogs()
+		logsWin = make("Frame", {
+			Name = "BoardNotifierLogs",
+			Size = UDim2.new(0, 420, 0, 320),
+			Position = UDim2.new(0.5, -210, 0.5, -160),
+			BackgroundColor3 = COL.bg,
+			BorderSizePixel = 0,
+			Active = true,
+			Visible = false,
+		}, gui)
+		round(logsWin, 10)
+		make("UIStroke", { Color = COL.stroke, Thickness = 1 }, logsWin)
+
+		local logsBar = make("TextLabel", {
+			Size = UDim2.new(1, -44, 0, 34),
+			Position = UDim2.new(0, 14, 0, 2),
+			BackgroundTransparency = 1,
+			Font = Enum.Font.GothamBold,
+			TextSize = 15,
+			TextColor3 = COL.text,
+			Text = "Board Logs",
+			TextXAlignment = Enum.TextXAlignment.Left,
+		}, logsWin)
+		logsBar.Active = true
+
+		local logsX = make("TextButton", {
+			Size = UDim2.new(0, 26, 0, 26),
+			Position = UDim2.new(1, -32, 0, 6),
+			BackgroundColor3 = COL.on,
+			Font = Enum.Font.GothamBold,
+			TextSize = 13,
+			TextColor3 = Color3.new(1, 1, 1),
+			Text = "X",
+			AutoButtonColor = false,
+			BorderSizePixel = 0,
+		}, logsWin)
+		round(logsX, 6)
+		track(connect(logsX.MouseButton1Click, function()
+			click()
+			logsShown = false
+			logsWin.Visible = false
+		end))
+
+		logScroll = make("ScrollingFrame", {
+			Size = UDim2.new(1, -20, 1, -44),
+			Position = UDim2.new(0, 10, 0, 40),
+			BackgroundColor3 = COL.element,
+			BorderSizePixel = 0,
+			ScrollBarThickness = 4,
+			ScrollBarImageColor3 = COL.sub,
+			CanvasSize = UDim2.new(0, 0, 0, 0),
+			AutomaticCanvasSize = Enum.AutomaticSize.Y,
+		}, logsWin)
+		round(logScroll, 6)
+		make("UIListLayout", {
+			Padding = UDim.new(0, 4),
+			SortOrder = Enum.SortOrder.LayoutOrder,
+		}, logScroll)
+		make("UIPadding", {
+			PaddingTop = UDim.new(0, 8),
+			PaddingBottom = UDim.new(0, 8),
+			PaddingLeft = UDim.new(0, 8),
+			PaddingRight = UDim.new(0, 8),
+		}, logScroll)
+
+		H.makeDraggable(logsWin, logsBar, track)
+	end
+
+	local function addLog(text)
+		if not logsWin then
+			buildLogs()
+		end
+		logOrder += 1
+		make("TextLabel", {
+			Name = "Log_" .. logOrder,
+			Size = UDim2.new(1, -5, 0, 32),
+			BackgroundTransparency = 1,
+			Font = Enum.Font.Code,
+			TextSize = 12,
+			TextColor3 = COL.sub,
+			Text = "[" .. os.date("%I:%M:%S %p") .. "] -- " .. tostring(text),
+			TextWrapped = true,
+			TextXAlignment = Enum.TextXAlignment.Left,
+			TextYAlignment = Enum.TextYAlignment.Center,
+			LayoutOrder = logOrder,
+		}, logScroll)
+	end
+
+	-- ---- behaviour ----
+	track(connect(closeX.MouseButton1Click, function()
+		click()
+		openBoardNotifier() -- toggles closed, disconnecting via the localConns cleanup below
+	end))
+
+	track(connect(toggleBtn.MouseButton1Click, function()
+		click()
+		toggled = not toggled
+		if toggled then
+			toggleBtn.Text = "Watcher: ON"
+			toggleBtn.BackgroundColor3 = COL.accent
+			lastText = tostring(thing.Text)
+			H.notify({ title = "Board Notifier", text = "Watcher enabled", kind = "success" })
+		else
+			toggleBtn.Text = "Watcher: OFF"
+			toggleBtn.BackgroundColor3 = COL.off
+			H.notify({ title = "Board Notifier", text = "Watcher disabled", kind = "warn" })
+		end
+	end))
+
+	track(connect(getBtn.MouseButton1Click, function()
+		click()
+		local text = tostring(thing.Text)
+		currentLabel.Text = "Current: " .. text
+		H.notify({ title = "Board Notifier", text = "Current: " .. text })
+	end))
+
+	track(connect(changeBtn.MouseButton1Click, function()
+		click()
+		local adjust = findAdjust()
+		if not adjust then
+			H.notify({ title = "Board Notifier", text = "Change input not found.", kind = "error" })
+			return
+		end
+		-- reveal the whole ancestor chain so the built-in box can take focus
+		local node = adjust
+		while node do
+			if node:IsA("GuiObject") then
+				node.Visible = true
+			elseif node:IsA("LayerCollector") then
+				node.Enabled = true
+			end
+			node = node.Parent
+		end
+		task.wait()
+		local box
+		for _, o in ipairs(adjust:GetDescendants()) do
+			if o:IsA("TextBox") then
+				box = o
+				break
+			end
+		end
+		if box then
+			box.Visible = true
+			box.TextEditable = true
+			box:CaptureFocus()
+		else
+			H.notify({ title = "Board Notifier", text = "No input box found.", kind = "error" })
+		end
+	end))
+
+	track(connect(logsBtn.MouseButton1Click, function()
+		click()
+		if not logsWin then
+			buildLogs()
+		end
+		logsShown = not logsShown
+		logsWin.Visible = logsShown
+	end))
+
+	track(connect(thing:GetPropertyChangedSignal("Text"), function()
+		local newText = tostring(thing.Text)
+		currentLabel.Text = "Current: " .. newText
+		if newText ~= lastText then
+			addLog(newText)
+			if toggled then
+				H.notify({ title = "Board Notifier", text = "New text: " .. newText })
+			end
+		end
+		lastText = newText
+	end))
+
+	-- when the window is destroyed (hub Unload, or the toggle re-run), drop the watcher
+	-- connections and the logs window with it
+	track(connect(win.AncestryChanged, function(_, parent)
+		if not parent then
+			for _, c in ipairs(localConns) do
+				pcall(function()
+					c:Disconnect()
+				end)
+			end
+			if logsWin then
+				logsWin:Destroy()
+			end
+		end
+	end))
+
+	H.makeDraggable(win, bar, track)
+	H.notify({ title = "Board Notifier", text = "Loaded successfully.", kind = "success" })
+	return "Board Notifier opened"
+end
+
+add{
+	name = "boardnotifier",
+	alias = { "boardnotis", "boardnoti" },
+	group = "World",
+	help = "Watch, log & change the school board text",
+	bindable = true,
+	run = openBoardNotifier,
+}
 
 -- ---------------- Movement ----------------
 add{
