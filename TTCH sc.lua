@@ -197,6 +197,94 @@ local function tween(o, props)
 	TweenService:Create(o, TweenInfo.new(0.15, Enum.EasingStyle.Quad, Enum.EasingDirection.Out), props):Play()
 end
 
+-- easing preset helper for one-off tweens that want a different curve/length than the default
+local function tweenE(o, time, style, dir, props)
+	TweenService:Create(o, TweenInfo.new(time, style, dir), props):Play()
+end
+
+-- ---------------- micro-animations ----------------
+-- Hover/press feedback as a soft white outline that fades in. It's a UIStroke, so it never
+-- intercepts clicks (a child Frame overlay would), follows the button's UICorner automatically,
+-- and never touches the button's BackgroundColor3 -- so it can't fight the theme system.
+H.animate = function(btn)
+	if not (btn:IsA("TextButton") or btn:IsA("ImageButton")) then
+		return btn -- MouseButton1Down/hover glow only makes sense on buttons
+	end
+	if btn:FindFirstChild("HoverGlow") or btn:GetAttribute("NoAnim") then
+		return btn -- already animated, or explicitly opted out (e.g. tabs)
+	end
+	local glow = make("UIStroke", {
+		Name = "HoverGlow",
+		Color = Color3.new(1, 1, 1),
+		Thickness = 0,
+		Transparency = 0.35,
+		ApplyStrokeMode = Enum.ApplyStrokeMode.Border,
+	}, btn)
+	local hovering = false
+	connect(btn.MouseEnter, function()
+		hovering = true
+		tween(glow, { Thickness = 1.5 })
+	end)
+	connect(btn.MouseLeave, function()
+		hovering = false
+		tween(glow, { Thickness = 0 })
+	end)
+	connect(btn.MouseButton1Down, function()
+		tween(glow, { Thickness = 3 })
+	end)
+	connect(btn.MouseButton1Up, function()
+		tween(glow, { Thickness = hovering and 1.5 or 0 })
+	end)
+	return btn
+end
+
+-- Apply the hover glow to every button under `root` in one sweep (idempotent -- H.animate
+-- skips anything already carrying a HoverGlow). Call it once for the persistent UI and again
+-- after building each on-demand window.
+H.animateAll = function(root)
+	for _, b in ipairs(root:GetDescendants()) do
+		if b:IsA("TextButton") or b:IsA("ImageButton") then
+			H.animate(b)
+		end
+	end
+end
+
+-- Pop a window/frame in on open: a quick scale-up with a slight overshoot. Uses its OWN
+-- UIScale (windows already carry a separate resize UIScale), and both multiply -- it settles at
+-- 1, so it leaves the resize scale untouched once done.
+H.popIn = function(frame)
+	-- reuse a named pop scale so re-opening a persistent window (settings, picker) doesn't
+	-- stack up UIScales; distinct from the unnamed resize UIScale
+	local s = frame:FindFirstChild("PopScale")
+	if not s then
+		s = make("UIScale", { Name = "PopScale", Scale = 0.92 }, frame)
+	else
+		s.Scale = 0.92
+	end
+	tweenE(s, 0.2, Enum.EasingStyle.Back, Enum.EasingDirection.Out, { Scale = 1 })
+end
+
+-- Close animation: shrink the window away, then run `done` (destroy it, or hide it). Guarded so
+-- a double-click can't run `done` twice.
+H.popOut = function(frame, done)
+	if frame:GetAttribute("Closing") then
+		return
+	end
+	frame:SetAttribute("Closing", true)
+	local s = frame:FindFirstChild("PopScale")
+	if not s then
+		s = make("UIScale", { Name = "PopScale", Scale = 1 }, frame)
+	end
+	local tw = TweenService:Create(s, TweenInfo.new(0.13, Enum.EasingStyle.Quad, Enum.EasingDirection.In), { Scale = 0.85 })
+	tw:Play()
+	tw.Completed:Connect(function()
+		frame:SetAttribute("Closing", false)
+		if done then
+			done()
+		end
+	end)
+end
+
 -- ========== GUI ==========
 -- Where our ScreenGuis live. Roblox draws CoreGui (topbar, chat, backpack, emote wheel) above
 -- EVERYTHING in PlayerGui -- they're two separate layers, not one sorted list -- so no
@@ -333,6 +421,25 @@ H.makeResizable = function(frame, baseW, baseH)
 	return scale
 end
 
+-- Effective UIScale for a descendant (walks up to the window's UIScale). Canvas sizing must
+-- divide AbsoluteContentSize -- which is already scaled -- by this, or a resized window sizes
+-- its scroll canvas scale-times-too-tall and you get blank space at the bottom.
+H.scaleOf = function(obj)
+	-- multiply every UIScale in the ancestry (a window carries both a resize scale and, while
+	-- opening, a pop-in scale), so canvas sizing stays correct with more than one in play
+	local s = 1
+	local o = obj
+	while o do
+		for _, ch in ipairs(o:GetChildren()) do
+			if ch:IsA("UIScale") then
+				s *= ch.Scale
+			end
+		end
+		o = o.Parent
+	end
+	return s
+end
+
 main.Name = "Main" -- keyed by name, so it needs one
 H.makeResizable(main, 380, 254)
 
@@ -410,13 +517,16 @@ H.chrome = function(frame, opts)
 		ZIndex = 10,
 	}, frame)
 	round(closeBtn, 9)
+	H.animate(closeBtn)
 	connect(closeBtn.MouseButton1Click, function()
 		click()
-		if opts.onClose then
-			opts.onClose()
-		else
-			frame:Destroy()
-		end
+		H.popOut(frame, function()
+			if opts.onClose then
+				opts.onClose()
+			else
+				frame:Destroy()
+			end
+		end)
 	end)
 
 	local minBtn
@@ -432,6 +542,7 @@ H.chrome = function(frame, opts)
 			ZIndex = 10,
 		}, frame)
 		round(minBtn, 9)
+		H.animate(minBtn)
 
 		local collapsed, saved, hidden = false, nil, {}
 		connect(minBtn.MouseButton1Click, function()
@@ -568,6 +679,7 @@ local tabLayout = make("UIListLayout", {
 	Padding = UDim.new(0, 5),
 	SortOrder = Enum.SortOrder.LayoutOrder,
 }, tabStrip)
+make("UIPadding", { PaddingLeft = UDim.new(0, 4) }, tabStrip)
 
 local tabOrder = 0
 -- name    : unique key into pages/tabs (what selectTab/showTab address)
@@ -587,6 +699,19 @@ local function makeTab(name, onClick, display)
 		LayoutOrder = tabOrder,
 	}, tabStrip)
 	round(btn, 7)
+	btn:SetAttribute("NoAnim", true) -- tabs use the underline animation below, not the hover glow
+	-- animated white underline: grows on hover, fills when the tab is selected. White so it
+	-- reads on both the accent (selected) and dark (hover) backgrounds; centered, so it grows
+	-- symmetrically without touching the horizontal tab layout.
+	local underline = make("Frame", {
+		Name = "Underline",
+		AnchorPoint = Vector2.new(0.5, 1),
+		Position = UDim2.new(0.5, 0, 1, -3),
+		Size = UDim2.new(0, 0, 0, 2),
+		BackgroundColor3 = Color3.new(1, 1, 1),
+		BorderSizePixel = 0,
+	}, btn)
+	round(underline, 1)
 	local page = make("Frame", {
 		Size = UDim2.new(1, -24, 1, -132), -- keeps the 122px page height; the extra goes to the bottom bar
 		Position = UDim2.new(0, 12, 0, 80),
@@ -595,15 +720,17 @@ local function makeTab(name, onClick, display)
 	}, main)
 	pages[name], tabs[name] = page, btn
 
-	-- hover only applies to inactive tabs; the selected one keeps its accent
+	-- hover only applies to inactive tabs; the selected one keeps its accent + full underline
 	connect(btn.MouseEnter, function()
 		if currentTab ~= name then
 			tween(btn, { BackgroundColor3 = COL.stroke, TextColor3 = COL.text })
+			tween(underline, { Size = UDim2.new(0.45, 0, 0, 2) })
 		end
 	end)
 	connect(btn.MouseLeave, function()
 		if currentTab ~= name then
 			tween(btn, { BackgroundColor3 = COL.element, TextColor3 = COL.sub })
+			tween(underline, { Size = UDim2.new(0, 0, 0, 2) })
 		end
 	end)
 
@@ -642,7 +769,7 @@ end
 
 -- keep the strip's canvas as wide as the tab row
 local function sizeTabCanvas()
-	tabStrip.CanvasSize = UDim2.new(0, tabLayout.AbsoluteContentSize.X, 0, 0)
+	tabStrip.CanvasSize = UDim2.new(0, tabLayout.AbsoluteContentSize.X / H.scaleOf(tabStrip) + 8, 0, 0)
 end
 connect(tabLayout:GetPropertyChangedSignal("AbsoluteContentSize"), sizeTabCanvas)
 sizeTabCanvas()
@@ -661,10 +788,19 @@ function selectTab(name)
 	for n, page in pairs(pages) do
 		local active = n == name
 		page.Visible = active
+		if active then
+			-- subtle slide-up as the page appears
+			page.Position = UDim2.new(0, 12, 0, 88)
+			tween(page, { Position = UDim2.new(0, 12, 0, 80) })
+		end
 		tween(tabs[n], {
 			BackgroundColor3 = active and COL.accent or COL.element,
 			TextColor3 = active and Color3.new(1, 1, 1) or COL.sub,
 		})
+		local ul = tabs[n]:FindFirstChild("Underline")
+		if ul then
+			tween(ul, { Size = UDim2.new(active and 0.7 or 0, 0, 0, 2) })
+		end
 	end
 end
 
@@ -692,6 +828,7 @@ local function makeSwitch(parent, y, initial, onChanged)
 		BorderSizePixel = 0,
 	}, parent)
 	round(btn, 11)
+	H.animate(btn)
 	local knob = make("Frame", {
 		Size = UDim2.new(0, 16, 0, 16),
 		Position = initial and UDim2.new(1, -19, 0.5, -8) or UDim2.new(0, 3, 0.5, -8),
@@ -820,8 +957,13 @@ do
 			Padding = UDim.new(0, 6),
 			SortOrder = Enum.SortOrder.LayoutOrder,
 		}, scroll)
+		make("UIPadding", {
+			PaddingTop = UDim.new(0, 4),
+			PaddingLeft = UDim.new(0, 4),
+			PaddingRight = UDim.new(0, 4),
+		}, scroll)
 		connect(layout:GetPropertyChangedSignal("AbsoluteContentSize"), function()
-			scroll.CanvasSize = UDim2.new(0, 0, 0, layout.AbsoluteContentSize.Y + 6)
+			scroll.CanvasSize = UDim2.new(0, 0, 0, layout.AbsoluteContentSize.Y / H.scaleOf(scroll) + 6)
 		end)
 		local ord = 0
 		local function sec(text)
@@ -1262,7 +1404,7 @@ local toggleSpeed = select(2, makeSwitch(speedPage, 0, false, function(on)
 	speedEnabled = on
 end))
 
-row(speedPage, 36, "Speed (0-1000000)")
+row(speedPage, 36, "Speed (0-99999)")
 local speedBox = make("TextBox", {
 	Size = UDim2.new(0, 78, 0, 26),
 	Position = UDim2.new(1, -78, 0, 34),
@@ -1297,7 +1439,7 @@ updateSpeedUI()
 connect(speedBox.FocusLost, function()
 	local n = tonumber(speedBox.Text)
 	if n then
-		_G.CFrameSpeed = math.clamp(n, 0, 1000000)
+		_G.CFrameSpeed = math.clamp(n, 0, 99999)
 	end
 	updateSpeedUI()
 end)
@@ -2402,7 +2544,7 @@ local round, click, row, makeSwitch, flyPage = H.round, H.click, H.row, H.makeSw
 
 local flyEnabled = false
 local flightSpeed = 50
-local FLY_MAX_SPEED = 1000000
+local FLY_MAX_SPEED = 9842774
 local awaitingFlyKey = false
 local flyConns = {}
 local flyGyro, flyVel
@@ -2620,7 +2762,7 @@ local setFlySwitch, toggleFly = makeSwitch(flyPage, 0, false, function(on)
 	end
 end)
 
-row(flyPage, 36, "Speed (0-1000000)")
+row(flyPage, 36, "Speed (0-9842774)")
 local flyBox = make("TextBox", {
 	Size = UDim2.new(0, 90, 0, 26),
 	Position = UDim2.new(1, -90, 0, 34),
@@ -3016,7 +3158,7 @@ end
 -- you asked for, not the one the game started with
 world.setBrightness = function(v)
 	world.capture()
-	v = math.clamp(v, 0, 1000000)
+	v = math.clamp(v, 0, 999999999999999999999999)
 	world.orig.Brightness = v
 	world.lighting.Brightness = v
 	return v
@@ -3213,6 +3355,11 @@ local toolsScroll = make("ScrollingFrame", {
 local toolsLayout = make("UIListLayout", {
 	Padding = UDim.new(0, 6),
 	SortOrder = Enum.SortOrder.LayoutOrder,
+}, toolsScroll)
+make("UIPadding", {
+	PaddingTop = UDim.new(0, 4),
+	PaddingLeft = UDim.new(0, 4),
+	PaddingRight = UDim.new(0, 4),
 }, toolsScroll)
 
 -- add a tool by giving it a name + run function; unset slots stay placeholders
@@ -3508,7 +3655,7 @@ end)
 
 -- keep the scroll canvas sized to the button list
 local function sizeToolsCanvas()
-	toolsScroll.CanvasSize = UDim2.new(0, 0, 0, toolsLayout.AbsoluteContentSize.Y + 6)
+	toolsScroll.CanvasSize = UDim2.new(0, 0, 0, toolsLayout.AbsoluteContentSize.Y / H.scaleOf(toolsScroll) + 6)
 end
 connect(toolsLayout:GetPropertyChangedSignal("AbsoluteContentSize"), sizeToolsCanvas)
 sizeToolsCanvas()
@@ -3715,7 +3862,7 @@ local function applyConfig(cfg)
 		end
 	end
 	if tonumber(cfg.cframeSpeed) then
-		_G.CFrameSpeed = math.clamp(tonumber(cfg.cframeSpeed), 0, 1000000)
+		_G.CFrameSpeed = math.clamp(tonumber(cfg.cframeSpeed), 0, 99999)
 		Speed.updateUI()
 	end
 	if tonumber(cfg.gravity) then
@@ -3879,7 +4026,14 @@ local _, setCloseBtn = H.chrome(setFrame, {
 
 connect(cogBtn.MouseButton1Click, function()
 	click()
-	setFrame.Visible = not setFrame.Visible
+	if setFrame.Visible then
+		H.popOut(setFrame, function()
+			setFrame.Visible = false
+		end)
+	else
+		setFrame.Visible = true
+		H.popIn(setFrame)
+	end
 end)
 
 local setScroll = make("ScrollingFrame", {
@@ -3894,6 +4048,11 @@ local setScroll = make("ScrollingFrame", {
 local setLayout = make("UIListLayout", {
 	Padding = UDim.new(0, 6),
 	SortOrder = Enum.SortOrder.LayoutOrder,
+}, setScroll)
+make("UIPadding", {
+	PaddingTop = UDim.new(0, 4),
+	PaddingLeft = UDim.new(0, 4),
+	PaddingRight = UDim.new(0, 4),
 }, setScroll)
 
 local setStatus = make("TextLabel", {
@@ -4139,6 +4298,7 @@ local function openPicker(role)
 		setFrame.AbsolutePosition.Y
 	)
 	picker.frame.Visible = true
+	H.popIn(picker.frame)
 	pickerRender()
 end
 
@@ -4648,6 +4808,11 @@ do
 		Padding = UDim.new(0, 2),
 		SortOrder = Enum.SortOrder.LayoutOrder,
 	}, themeDropList)
+	make("UIPadding", {
+		PaddingTop = UDim.new(0, 3),
+		PaddingLeft = UDim.new(0, 3),
+		PaddingRight = UDim.new(0, 3),
+	}, themeDropList)
 
 	local function pick(name)
 		selectedTheme = name
@@ -4690,7 +4855,7 @@ do
 				pick(e.name)
 			end)
 		end
-		themeDropList.CanvasSize = UDim2.new(0, 0, 0, dropLayout.AbsoluteContentSize.Y + 4)
+		themeDropList.CanvasSize = UDim2.new(0, 0, 0, dropLayout.AbsoluteContentSize.Y / H.scaleOf(themeDropList) + 4)
 	end
 
 	connect(themeDropBtn.MouseButton1Click, function()
@@ -4846,7 +5011,7 @@ themeRefreshers[#themeRefreshers + 1] = refreshSettingsUI
 themeRefreshers[#themeRefreshers + 1] = H.reselectTab
 
 local function sizeSetCanvas()
-	setScroll.CanvasSize = UDim2.new(0, 0, 0, setLayout.AbsoluteContentSize.Y + 6)
+	setScroll.CanvasSize = UDim2.new(0, 0, 0, setLayout.AbsoluteContentSize.Y / H.scaleOf(setScroll) + 6)
 end
 connect(setLayout:GetPropertyChangedSignal("AbsoluteContentSize"), sizeSetCanvas)
 sizeSetCanvas()
@@ -4928,8 +5093,11 @@ end
 -- with a live window closes it (toggle), returning nil so callers bail. Otherwise returns
 -- (frame, body) where body is where you drop children.
 local function window(name, title, w, h)
-	if gui:FindFirstChild(name) then
-		gui[name]:Destroy()
+	local existing = gui:FindFirstChild(name)
+	if existing then
+		H.popOut(existing, function()
+			existing:Destroy()
+		end)
 		return nil
 	end
 	local f = make("Frame", {
@@ -4966,6 +5134,13 @@ local function window(name, title, w, h)
 	}, f)
 
 	H.makeDraggable(f, bar)
+	-- deferred: the caller fills `body` with buttons AFTER window() returns, so sweep next tick
+	task.defer(function()
+		if f and f.Parent then
+			H.animateAll(f)
+		end
+	end)
+	H.popIn(f)
 	return f, body
 end
 Extra.window = window
@@ -5631,6 +5806,11 @@ Extra.openPlayers = function()
 		Padding = UDim.new(0, 6),
 		SortOrder = Enum.SortOrder.LayoutOrder,
 	}, sc)
+	make("UIPadding", {
+		PaddingTop = UDim.new(0, 4),
+		PaddingLeft = UDim.new(0, 4),
+		PaddingRight = UDim.new(0, 4),
+	}, sc)
 
 	local function addRow(p, i)
 		local rf = make("Frame", {
@@ -5705,7 +5885,7 @@ Extra.openPlayers = function()
 		addRow(p, i)
 	end
 	local function sz()
-		sc.CanvasSize = UDim2.new(0, 0, 0, layout.AbsoluteContentSize.Y + 6)
+		sc.CanvasSize = UDim2.new(0, 0, 0, layout.AbsoluteContentSize.Y / H.scaleOf(sc) + 6)
 	end
 	connect(layout:GetPropertyChangedSignal("AbsoluteContentSize"), sz)
 	sz()
@@ -5817,6 +5997,11 @@ Extra.openPlayerInfo = function(query)
 		Padding = UDim.new(0, 2),
 		SortOrder = Enum.SortOrder.LayoutOrder,
 	}, sc)
+	make("UIPadding", {
+		PaddingTop = UDim.new(0, 4),
+		PaddingLeft = UDim.new(0, 4),
+		PaddingRight = UDim.new(0, 4),
+	}, sc)
 
 	local function stat(name, order)
 		local rf = make("Frame", {
@@ -5861,7 +6046,7 @@ Extra.openPlayerInfo = function(query)
 	end
 
 	local function sz()
-		sc.CanvasSize = UDim2.new(0, 0, 0, layout.AbsoluteContentSize.Y + 6)
+		sc.CanvasSize = UDim2.new(0, 0, 0, layout.AbsoluteContentSize.Y / H.scaleOf(sc) + 6)
 	end
 	connect(layout:GetPropertyChangedSignal("AbsoluteContentSize"), sz)
 	sz()
@@ -6297,8 +6482,11 @@ end
 -- ---------------- shared window helper ----------------
 -- every popup here is the same shape: titled frame + close X + scrolling rows
 local function listWindow(name, title, rows)
-	if gui:FindFirstChild(name) then
-		gui[name]:Destroy()
+	local existing = gui:FindFirstChild(name)
+	if existing then
+		H.popOut(existing, function()
+			existing:Destroy()
+		end)
 		return
 	end
 	local f = make("Frame", {
@@ -6340,6 +6528,11 @@ local function listWindow(name, title, rows)
 		Padding = UDim.new(0, 4),
 		SortOrder = Enum.SortOrder.LayoutOrder,
 	}, sc)
+	make("UIPadding", {
+		PaddingTop = UDim.new(0, 4),
+		PaddingLeft = UDim.new(0, 4),
+		PaddingRight = UDim.new(0, 4),
+	}, sc)
 
 	for i, r in ipairs(rows) do
 		local isHeader = r.header
@@ -6361,12 +6554,14 @@ local function listWindow(name, title, rows)
 	end
 
 	local function size()
-		sc.CanvasSize = UDim2.new(0, 0, 0, layout.AbsoluteContentSize.Y + 6)
+		sc.CanvasSize = UDim2.new(0, 0, 0, layout.AbsoluteContentSize.Y / H.scaleOf(sc) + 6)
 	end
 	connect(layout:GetPropertyChangedSignal("AbsoluteContentSize"), size)
 	size()
 
 	H.makeDraggable(f, bar)
+	H.animateAll(f)
+	H.popIn(f)
 end
 
 -- ---------------- generated windows ----------------
@@ -6423,8 +6618,11 @@ end
 
 -- ---------------- lifted windows ----------------
 local function openCmdBar()
-	if gui:FindFirstChild("CmdBar") then
-		gui.CmdBar:Destroy()
+	local existing = gui:FindFirstChild("CmdBar")
+	if existing then
+		H.popOut(existing, function()
+			existing:Destroy()
+		end)
 		return
 	end
 
@@ -6445,6 +6643,7 @@ local function openCmdBar()
 	H.makeResizable(cmdGui, 420, 45)
 	-- no handle: drag it by its border (clicks inside still go to the text box)
 	H.makeDraggable(cmdGui)
+	H.popIn(cmdGui)
 
 	local box = make("TextBox", {
 		-- -34 not -20: leaves the bottom-right corner free for the resize grip
@@ -6669,6 +6868,8 @@ local function openClickTp()
 	-- clickConnect, not the hub's connect: this window is rebuilt on every <prefix>clicktp,
 	-- so its listeners have to be disconnectable by ClickTpCleanup
 	H.makeDraggable(frame, title, clickConnect)
+	H.animateAll(frame)
+	H.popIn(frame)
 
 	_G.ClickTpToggle = function()
 		frame.Visible = not frame.Visible
@@ -6718,7 +6919,7 @@ add{
 	bindable = true,
 	run = function(c)
 		if c.n then
-			_G.CFrameSpeed = math.clamp(c.n, 0, 1000000)
+			_G.CFrameSpeed = math.clamp(c.n, 0, 99999)
 			Speed.updateUI()
 			return "cframe speed " .. _G.CFrameSpeed
 		end
@@ -6841,7 +7042,14 @@ add{
 	help = "Show / hide the hub",
 	bindable = true,
 	run = function()
-		main.Visible = not main.Visible
+		if main.Visible then
+			H.popOut(main, function()
+				main.Visible = false
+			end)
+		else
+			main.Visible = true
+			H.popIn(main)
+		end
 	end,
 }
 add{
@@ -7263,11 +7471,9 @@ local function openBoardNotifier()
 	-- toggle off if already open
 	local existing = gui:FindFirstChild("BoardNotifier")
 	if existing then
-		existing:Destroy()
-		local logsWin = gui:FindFirstChild("BoardNotifierLogs")
-		if logsWin then
-			logsWin:Destroy()
-		end
+		H.popOut(existing, function()
+			existing:Destroy() -- AncestryChanged handler tears down the logs window + connections
+		end)
 		return "Board Notifier closed"
 	end
 
@@ -7334,13 +7540,11 @@ local function openBoardNotifier()
 	}, win)
 	bar.Active = true
 
-	-- board-style yellow minimize + red close; close toggles the notifier back off
+	-- board-style yellow minimize + red close; the default close destroys the window and the
+	-- AncestryChanged handler below tears down the logs window + connections
 	H.chrome(win, {
 		header = 40,
 		title = bar,
-		onClose = function()
-			openBoardNotifier()
-		end,
 	})
 
 	local currentLabel = make("TextLabel", {
@@ -7586,6 +7790,8 @@ local function openBoardNotifier()
 	end))
 
 	H.makeDraggable(win, bar, track)
+	H.animateAll(win)
+	H.popIn(win)
 	H.notify({ title = "Board Notifier", text = "Loaded successfully.", kind = "success" })
 	return "Board Notifier opened"
 end
@@ -8421,8 +8627,13 @@ local function sectioned(page)
 		Padding = UDim.new(0, 5),
 		SortOrder = Enum.SortOrder.LayoutOrder,
 	}, scroll)
+	make("UIPadding", {
+		PaddingTop = UDim.new(0, 4),
+		PaddingLeft = UDim.new(0, 4),
+		PaddingRight = UDim.new(0, 4),
+	}, scroll)
 	connect(layout:GetPropertyChangedSignal("AbsoluteContentSize"), function()
-		scroll.CanvasSize = UDim2.new(0, 0, 0, layout.AbsoluteContentSize.Y + 6)
+		scroll.CanvasSize = UDim2.new(0, 0, 0, layout.AbsoluteContentSize.Y / H.scaleOf(scroll) + 6)
 	end)
 	local ord = 0
 	local function sec(text)
@@ -8712,6 +8923,13 @@ pcall(hubLoadConfig)
 
 H.refreshKeys() -- paint every key label once, after config
 
+-- hover animation across every button built at load (tabs/switches already self-animated; this
+-- idempotent sweep catches the cog, unload, tools, settings, colour picker, game + debug tabs)
+H.animateAll(gui)
+
+-- pop the hub in when it first loads
+H.popIn(main)
+
 -- version tag (bottom-right) so you can tell which copy is running
 make("TextLabel", {
 	Size = UDim2.new(0, 60, 0, 12),
@@ -8739,15 +8957,16 @@ local unloadBtn = make("TextButton", {
 round(unloadBtn, 5)
 connect(unloadBtn.MouseButton1Click, function()
 	click()
-	if _G.ScriptHubCleanup then
-		_G.ScriptHubCleanup()
-	end
-
-	local folder = workspace:FindFirstChild("InfBaseplate")
-
-	if folder then
-		folder:Destroy()
-	end
+	-- shrink the hub away, then tear it down
+	H.popOut(main, function()
+		if _G.ScriptHubCleanup then
+			_G.ScriptHubCleanup()
+		end
+		local folder = workspace:FindFirstChild("InfBaseplate")
+		if folder then
+			folder:Destroy()
+		end
+	end)
 end)
 
 -- ---------------- chat commands ----------------
