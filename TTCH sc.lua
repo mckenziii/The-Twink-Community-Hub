@@ -867,11 +867,6 @@ do
 		btn("Board Watcher", function()
 			H.runCommand("boardnotifier") -- toggles the themed board notifier
 		end)
-
-		sec("Main")
-		btn("Example button", function()
-			H.notify({ title = "MicUp", text = "Example button pressed", kind = "success" })
-		end)
 	end
 
 	-- share so later feature blocks can add game tabs / switch modes:
