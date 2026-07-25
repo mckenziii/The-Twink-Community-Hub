@@ -240,7 +240,7 @@ pcall(function()
 end)
 
 -- toggle click sound (built-in asset, always loads; swap SoundId for any catalog sound)
-local clickSound = make("Sound", { SoundId = "rbxasset://sounds/clickfast.wav", Volume = 0.6 }, gui)
+local clickSound = make("Sound", { SoundId = "rbxassetid://88442833509532", Volume = 0.6 }, gui)
 local function click()
 	clickSound:Play()
 end
@@ -1312,7 +1312,10 @@ connect(player.CharacterAdded, function(c)
 	updateSpeedUI()
 end)
 
-connect(RunService.RenderStepped, function()
+-- Stepped (not RenderStepped): this runs before the camera's render update, so the camera
+-- follows the new position the same frame instead of trailing a frame behind. No camera
+-- manipulation needed -- that avoids the oversized talking UI / shift-lock facing bugs.
+connect(RunService.Stepped, function()
 	if not speedEnabled then
 		return
 	end
@@ -1323,7 +1326,7 @@ connect(RunService.RenderStepped, function()
 	local hum = char and char:FindFirstChildOfClass("Humanoid")
 	if hum and hrp then
 		-- translate only (CFrame + Vector3 keeps rotation), so the humanoid still handles
-		-- facing -- including shift lock -- and the default camera follows on its own
+		-- facing -- including shift lock
 		hrp.CFrame = hrp.CFrame + hum.MoveDirection * _G.CFrameSpeed * 0.1
 	end
 end)
