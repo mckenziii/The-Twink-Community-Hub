@@ -1322,14 +1322,9 @@ connect(RunService.RenderStepped, function()
 	end
 	local hum = char and char:FindFirstChildOfClass("Humanoid")
 	if hum and hrp then
-		local delta = hum.MoveDirection * _G.CFrameSpeed * 0.1
-		hrp.CFrame = hrp.CFrame + delta
-		-- shift the camera by the same amount so it stays on the player instead of trailing
-		-- behind during fast movement
-		local cam = workspace.CurrentCamera
-		if cam then
-			cam.CFrame = cam.CFrame + delta
-		end
+		-- translate only (CFrame + Vector3 keeps rotation), so the humanoid still handles
+		-- facing -- including shift lock -- and the default camera follows on its own
+		hrp.CFrame = hrp.CFrame + hum.MoveDirection * _G.CFrameSpeed * 0.1
 	end
 end)
 
@@ -6226,6 +6221,7 @@ local Binds, make, round, gui, click, main = H.Binds, H.make, H.round, H.gui, H.
 local world = H.world
 local Speed, Grav, Esp, Hitbox, Move, Fly, hubFindPlayer, hubSaveConfig, hubKeyFromName = H.Speed, H.Grav, H.Esp, H.Hitbox, H.Move, H.Fly, H.findPlayer, H.saveConfig, H.keyFromName
 local Extra = H.Extra
+local isAdmin = H.isAdmin -- gates the Debug commands (same IDs as the Debug tab)
 local hubRunCommand
 
 local cmdBox = make("TextBox", {
@@ -6384,7 +6380,7 @@ local function openHelp()
 	local function emit(group)
 		local first = true
 		for _, s in ipairs(ORDER) do
-			if s.group == group then
+			if s.group == group and not s.debug then -- debug commands live in `debughelp` only
 				if first then
 					rows[#rows + 1] = { text = string.upper(group), header = true }
 					first = false
@@ -7251,27 +7247,6 @@ local function hopTo(wantSmall)
 	return "teleporting..."
 end
 
--- classic velocity fling (FE-limited, troll): overlaps the target and pumps velocity for a beat
-local function doFling(target)
-	local myhrp = player.Character and player.Character:FindFirstChild("HumanoidRootPart")
-	local thrp = target and target.Character and target.Character:FindFirstChild("HumanoidRootPart")
-	if not (myhrp and thrp) then
-		return "player not found"
-	end
-	local start = tick()
-	local conn
-	conn = H.RunService.Heartbeat:Connect(function()
-		if tick() - start > 0.6 or not thrp.Parent then
-			conn:Disconnect()
-			return
-		end
-		myhrp.CFrame = thrp.CFrame
-		myhrp.AssemblyLinearVelocity = Vector3.new(1, 1, 1) * 9e4
-		myhrp.AssemblyAngularVelocity = Vector3.new(1, 1, 1) * 9e4
-	end)
-	return "flinging " .. target.Name
-end
-
 -- ---------------- Board Notifier ----------------
 -- Ported from the standalone Board Notifier script and dressed in the hub theme: the same
 -- watch / log / change-text behaviour, but built with make()/round()/COL so it repaints on a
@@ -8119,15 +8094,249 @@ add{
 		return workspace.FilteringEnabled and "FE is ON (filtering enabled)" or "FE is OFF"
 	end,
 }
-add{
-	name = "fling",
-	args = "<player>",
-	group = "Scripts",
-	help = "Fling a player (FE-limited, troll)",
-	run = function(c)
-		return doFling(hubFindPlayer(c.arg))
-	end,
-}
+-- ---------------- debug commands ----------------
+-- Registered only for the Debug user IDs (same gate as the Debug tab), so for everyone else
+-- they don't exist at all. Flagged `debug = true`: hidden from `help`, listed by `debughelp`.
+if isAdmin then
+	local Stats = game:GetService("Stats")
+	local dbgFrozen = false
+
+	local function copyOut(v)
+		if setclipboard then
+			pcall(setclipboard, tostring(v))
+			return "copied: " .. tostring(v)
+		end
+		return "no setclipboard"
+	end
+	local function myHRP()
+		return player.Character and player.Character:FindFirstChild("HumanoidRootPart")
+	end
+	local function myHum()
+		return player.Character and player.Character:FindFirstChildOfClass("Humanoid")
+	end
+
+	add{
+		name = "debughelp",
+		alias = { "dhelp" },
+		group = "Debug",
+		debug = true,
+		help = "List debug commands",
+		run = function()
+			local rows = { { text = "DEBUG COMMANDS", header = true } }
+			for _, s in ipairs(ORDER) do
+				if s.debug then
+					rows[#rows + 1] = { text = _G.prefix .. signature(s) .. "   -   " .. s.help }
+				end
+			end
+			listWindow("DebugHelp", "Debug Commands", rows)
+		end,
+	}
+	add{
+		name = "testtoast",
+		args = "<info/success/warn/error>",
+		group = "Debug",
+		debug = true,
+		help = "Fire a test toast of the given kind",
+		run = function(c)
+			local kind = (c.arg or "info"):lower()
+			if kind ~= "success" and kind ~= "warn" and kind ~= "error" then
+				kind = "info"
+			end
+			H.notify({ title = "Test", text = kind .. " toast test", kind = kind })
+		end,
+	}
+	add{
+		name = "stats",
+		group = "Debug",
+		debug = true,
+		help = "Show FPS / ping / memory / position",
+		run = function()
+			local fps = math.floor(1 / H.RunService.RenderStepped:Wait() + 0.5)
+			local ping = math.floor(player:GetNetworkPing() * 1000 + 0.5)
+			local mem = 0
+			pcall(function()
+				mem = Stats:GetTotalMemoryUsageMb()
+			end)
+			local hrp = myHRP()
+			local pos = hrp and string.format("%.0f, %.0f, %.0f", hrp.Position.X, hrp.Position.Y, hrp.Position.Z) or "--"
+			H.notify({
+				title = "Stats",
+				text = string.format("FPS %d  |  Ping %dms  |  Mem %.0fMB  |  Pos %s", fps, ping, mem, pos),
+			})
+		end,
+	}
+	add{
+		name = "gameinfo",
+		group = "Debug",
+		debug = true,
+		help = "Print place / job / FE / player count",
+		run = function()
+			print("[Debug] PlaceId", game.PlaceId, "JobId", game.JobId, "FE", workspace.FilteringEnabled)
+			print("[Debug] Players", #Players:GetPlayers(), "/", Players.MaxPlayers)
+			H.notify({ title = "Debug", text = "game info printed to console", kind = "success" })
+		end,
+	}
+	add{
+		name = "printplayers",
+		group = "Debug",
+		debug = true,
+		help = "Print every player to the console",
+		run = function()
+			for _, p in ipairs(Players:GetPlayers()) do
+				print("[Debug]", p.Name, p.DisplayName, p.UserId)
+			end
+			return "players printed"
+		end,
+	}
+	add{
+		name = "executor",
+		group = "Debug",
+		debug = true,
+		help = "Show the executor name",
+		run = function()
+			local exec = (identifyexecutor and identifyexecutor()) or (getexecutorname and getexecutorname()) or "unknown"
+			H.notify({ title = "Executor", text = tostring(exec) })
+		end,
+	}
+	add{
+		name = "copyplace",
+		group = "Debug",
+		debug = true,
+		help = "Copy the PlaceId",
+		run = function()
+			return copyOut(game.PlaceId)
+		end,
+	}
+	add{
+		name = "copyjob",
+		group = "Debug",
+		debug = true,
+		help = "Copy the JobId",
+		run = function()
+			return copyOut(game.JobId)
+		end,
+	}
+	add{
+		name = "servertime",
+		group = "Debug",
+		debug = true,
+		help = "Copy the server time",
+		run = function()
+			return copyOut(workspace:GetServerTimeNow())
+		end,
+	}
+	add{
+		name = "heal",
+		group = "Debug",
+		debug = true,
+		help = "Heal yourself to full",
+		run = function()
+			local hum = myHum()
+			if hum then
+				hum.Health = hum.MaxHealth
+				return "healed"
+			end
+			return "no character"
+		end,
+	}
+	add{
+		name = "respawn",
+		group = "Debug",
+		debug = true,
+		help = "Reload your character",
+		run = function()
+			pcall(function()
+				player:LoadCharacter()
+			end)
+			return "respawning"
+		end,
+	}
+	add{
+		name = "tospawn",
+		group = "Debug",
+		debug = true,
+		help = "Teleport to a SpawnLocation",
+		run = function()
+			local hrp = myHRP()
+			local spawn = workspace:FindFirstChildOfClass("SpawnLocation")
+			if hrp and spawn then
+				hrp.CFrame = spawn.CFrame + Vector3.new(0, 5, 0)
+				return "at spawn"
+			end
+			return "no spawn found"
+		end,
+	}
+	add{
+		name = "freeze",
+		group = "Debug",
+		debug = true,
+		bindable = true,
+		help = "Anchor / unanchor yourself",
+		run = function()
+			local hrp = myHRP()
+			if not hrp then
+				return "no character"
+			end
+			dbgFrozen = not dbgFrozen
+			hrp.Anchored = dbgFrozen
+			return dbgFrozen and "frozen" or "unfrozen"
+		end,
+	}
+	add{
+		name = "highlightall",
+		group = "Debug",
+		debug = true,
+		help = "Highlight every other player",
+		run = function()
+			for _, p in ipairs(Players:GetPlayers()) do
+				if p ~= player and p.Character and not p.Character:FindFirstChild("DbgHL") then
+					local hl = Instance.new("Highlight")
+					hl.Name = "DbgHL"
+					hl.FillColor = Color3.fromRGB(255, 80, 80)
+					hl.Parent = p.Character
+				end
+			end
+			return "highlighted players"
+		end,
+	}
+	add{
+		name = "clearhl",
+		group = "Debug",
+		debug = true,
+		help = "Remove debug highlights",
+		run = function()
+			for _, d in ipairs(workspace:GetDescendants()) do
+				if d.Name == "DbgHL" and d:IsA("Highlight") then
+					d:Destroy()
+				end
+			end
+			return "highlights cleared"
+		end,
+	}
+	add{
+		name = "gc",
+		group = "Debug",
+		debug = true,
+		help = "Run the garbage collector + show Lua memory",
+		run = function()
+			local before = collectgarbage("count")
+			collectgarbage("collect")
+			return string.format("GC ran (%.0f KB -> %.0f KB)", before, collectgarbage("count"))
+		end,
+	}
+	add{
+		name = "testding",
+		group = "Debug",
+		debug = true,
+		help = "Preview the friend ding + toast",
+		run = function()
+			if H.friendDing then
+				H.friendDing()
+			end
+			H.notify({ title = "Friend joined", text = "test preview", kind = "success" })
+		end,
+	}
+end
 
 -- ---------------- dispatch ----------------
 hubRunCommand = function(input)
