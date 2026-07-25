@@ -1262,7 +1262,7 @@ local toggleSpeed = select(2, makeSwitch(speedPage, 0, false, function(on)
 	speedEnabled = on
 end))
 
-row(speedPage, 36, "Speed (0-99999)")
+row(speedPage, 36, "Speed (0-1000000)")
 local speedBox = make("TextBox", {
 	Size = UDim2.new(0, 78, 0, 26),
 	Position = UDim2.new(1, -78, 0, 34),
@@ -1297,7 +1297,7 @@ updateSpeedUI()
 connect(speedBox.FocusLost, function()
 	local n = tonumber(speedBox.Text)
 	if n then
-		_G.CFrameSpeed = math.clamp(n, 0, 99999)
+		_G.CFrameSpeed = math.clamp(n, 0, 1000000)
 	end
 	updateSpeedUI()
 end)
@@ -2402,7 +2402,7 @@ local round, click, row, makeSwitch, flyPage = H.round, H.click, H.row, H.makeSw
 
 local flyEnabled = false
 local flightSpeed = 50
-local FLY_MAX_SPEED = 9842774
+local FLY_MAX_SPEED = 1000000
 local awaitingFlyKey = false
 local flyConns = {}
 local flyGyro, flyVel
@@ -2620,7 +2620,7 @@ local setFlySwitch, toggleFly = makeSwitch(flyPage, 0, false, function(on)
 	end
 end)
 
-row(flyPage, 36, "Speed (0-9842774)")
+row(flyPage, 36, "Speed (0-1000000)")
 local flyBox = make("TextBox", {
 	Size = UDim2.new(0, 90, 0, 26),
 	Position = UDim2.new(1, -90, 0, 34),
@@ -3016,7 +3016,7 @@ end
 -- you asked for, not the one the game started with
 world.setBrightness = function(v)
 	world.capture()
-	v = math.clamp(v, 0, 999999999999999999999999)
+	v = math.clamp(v, 0, 1000000)
 	world.orig.Brightness = v
 	world.lighting.Brightness = v
 	return v
@@ -3715,7 +3715,7 @@ local function applyConfig(cfg)
 		end
 	end
 	if tonumber(cfg.cframeSpeed) then
-		_G.CFrameSpeed = math.clamp(tonumber(cfg.cframeSpeed), 0, 99999)
+		_G.CFrameSpeed = math.clamp(tonumber(cfg.cframeSpeed), 0, 1000000)
 		Speed.updateUI()
 	end
 	if tonumber(cfg.gravity) then
@@ -6718,7 +6718,7 @@ add{
 	bindable = true,
 	run = function(c)
 		if c.n then
-			_G.CFrameSpeed = math.clamp(c.n, 0, 99999)
+			_G.CFrameSpeed = math.clamp(c.n, 0, 1000000)
 			Speed.updateUI()
 			return "cframe speed " .. _G.CFrameSpeed
 		end
