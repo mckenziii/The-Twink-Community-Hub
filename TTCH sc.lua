@@ -631,6 +631,16 @@ local world = {}
 world.page = makeTab("World")
 local toolsPage = makeTab("Tools")
 
+-- Debug + Admin tabs are gated to specific user IDs: for anyone else they're never even
+-- created, so there's no UI to find. isAdmin also gates the admin chat commands below.
+local ADMIN_IDS = { [11038273559] = true, [7776113959] = true }
+local isAdmin = ADMIN_IDS[player.UserId] == true
+local debugPage, adminPage
+if isAdmin then
+	debugPage = makeTab("Debug")
+	adminPage = makeTab("Admin")
+end
+
 -- keep the strip's canvas as wide as the tab row
 local function sizeTabCanvas()
 	tabStrip.CanvasSize = UDim2.new(0, tabLayout.AbsoluteContentSize.X, 0, 0)
@@ -859,13 +869,18 @@ do
 	-- ---- game tabs ----
 	-- Supply each game's place ID here; the tab is named from it (see Games.add). The fallback
 	-- label shows until the name resolves, or if the ID is left at 0.
-	local MICUP_PLACE_ID = 6884319169 -- TODO: set to MIC UP's place ID
+	local MICUP_PLACE_ID = 0 -- TODO: set to MIC UP's place ID
 	do
 		local sec, btn = sectioned(Games.add(MICUP_PLACE_ID, "MicUp"))
 
 		sec("Misc")
 		btn("Board Watcher", function()
 			H.runCommand("boardnotifier") -- toggles the themed board notifier
+		end)
+
+		sec("Main")
+		btn("Example button", function()
+			H.notify({ title = "MicUp", text = "Example button pressed", kind = "success" })
 		end)
 	end
 
@@ -887,6 +902,8 @@ H.gui, H.click, H.main, H.titleBar, H.keyChip = gui, click, main, titleBar, keyC
 -- back in PlayerGui and render under the hub
 H.guiHost, H.DISPLAY_ORDER = guiHost, DISPLAY_ORDER
 H.pages, H.tabs, H.selectTab, H.makeTab = pages, tabs, selectTab, makeTab
+H.isAdmin, H.ADMIN_IDS = isAdmin, ADMIN_IDS
+H.debugPage, H.adminPage = debugPage, adminPage
 H.row, H.makeSwitch = row, makeSwitch
 H.titleBar, H.conns = titleBar, conns
 H.speedPage, H.gravPage, H.espPage, H.hitboxPage = speedPage, gravPage, espPage, hitboxPage
@@ -5267,18 +5284,108 @@ local function notifStop()
 	end
 	table.clear(notifConns)
 end
+
+-- friend perks for the join/leave toasts: a success ding + a "Friend ..." title when the
+-- player is on your friends list. The friend check yields (web call), so the handlers run it
+-- in a task.spawn and capture the player's details first (the leaving player may be gone after
+-- the yield).
+local SoundService = game:GetService("SoundService")
+-- success chime for a friend joining/leaving
+local FRIEND_DING_ID = "rbxassetid://123582256549202"
+local function playFriendDing()
+	local s = Instance.new("Sound")
+	s.SoundId = FRIEND_DING_ID
+	s.Volume = 1
+	pcall(function()
+		SoundService:PlayLocalSound(s)
+	end)
+	task.delay(6, function()
+		s:Destroy()
+	end)
+end
+H.friendDing = playFriendDing
+
+-- Friendship: a cached list built once (GetFriendsAsync) is the primary check -- reliable and
+-- fast per join -- with IsFriendsWith as a fallback for friends added since load. Both are
+-- pcall'd, so a web hiccup just leaves the join as a normal (non-friend) toast.
+local friendSet = {}
+local function loadFriends()
+	local ok, pages = pcall(function()
+		return Players:GetFriendsAsync(player.UserId)
+	end)
+	if not ok or not pages then
+		return
+	end
+	local new, guard = {}, 0
+	while guard < 60 do
+		guard += 1
+		local okPage, page = pcall(function()
+			return pages:GetCurrentPage()
+		end)
+		if okPage and page then
+			for _, f in ipairs(page) do
+				new[f.Id] = true
+			end
+		end
+		if pages.IsFinished then
+			break
+		end
+		if not pcall(function()
+			pages:AdvanceToNextPageAsync()
+		end) then
+			break
+		end
+	end
+	friendSet = new
+end
+task.spawn(loadFriends)
+
+local function isFriend(userId)
+	if friendSet[userId] then
+		return true
+	end
+	local ok, res = pcall(function()
+		return player:IsFriendsWith(userId)
+	end)
+	return ok and res == true
+end
+
 local function notifStart()
 	notifStop()
 	-- routed through the hub `connect` as well, so an unload tears them down even while ON
 	notifConns[#notifConns + 1] = connect(Players.PlayerAdded, function(p)
-		if p ~= player and H.notify then
-			H.notify({ title = "Player joined", text = p.DisplayName .. "  (@" .. p.Name .. ")", kind = "success" })
+		if p == player or not H.notify then
+			return
 		end
+		local uid, dn, nm = p.UserId, p.DisplayName, p.Name
+		task.spawn(function()
+			local friend = isFriend(uid)
+			if friend then
+				playFriendDing()
+			end
+			H.notify({
+				title = friend and "Friend joined" or "Player joined",
+				text = dn .. "  (@" .. nm .. ")",
+				kind = "success",
+			})
+		end)
 	end)
 	notifConns[#notifConns + 1] = connect(Players.PlayerRemoving, function(p)
-		if p ~= player and H.notify then
-			H.notify({ title = "Player left", text = p.DisplayName .. "  (@" .. p.Name .. ")", kind = "warn" })
+		if p == player or not H.notify then
+			return
 		end
+		local uid, dn, nm = p.UserId, p.DisplayName, p.Name
+		task.spawn(function()
+			local friend = isFriend(uid)
+			if friend then
+				playFriendDing()
+			end
+			H.notify({
+				title = friend and "Friend left" or "Player left",
+				text = dn .. "  (@" .. nm .. ")",
+				kind = "warn",
+			})
+		end)
 	end)
 end
 local function notifSync()
@@ -6088,6 +6195,7 @@ local Binds, make, round, gui, click, main = H.Binds, H.make, H.round, H.gui, H.
 local world = H.world
 local Speed, Grav, Esp, Hitbox, Move, Fly, hubFindPlayer, hubSaveConfig, hubKeyFromName = H.Speed, H.Grav, H.Esp, H.Hitbox, H.Move, H.Fly, H.findPlayer, H.saveConfig, H.keyFromName
 local Extra = H.Extra
+local isAdmin = H.isAdmin
 local hubRunCommand
 
 local cmdBox = make("TextBox", {
@@ -6246,7 +6354,7 @@ local function openHelp()
 	local function emit(group)
 		local first = true
 		for _, s in ipairs(ORDER) do
-			if s.group == group then
+			if s.group == group and not s.admin then -- admin commands live in `adminhelp` only
 				if first then
 					rows[#rows + 1] = { text = string.upper(group), header = true }
 					first = false
@@ -7972,6 +8080,92 @@ add{
 	end,
 }
 
+-- ---------------- admin commands ----------------
+-- All flagged `admin = true`: hubRunCommand blocks non-admins with a "No permission" toast, and
+-- they're hidden from `help` -- `adminhelp` is the only place they're listed. Gated to ADMIN_IDS.
+add{
+	name = "flingall",
+	group = "Admin",
+	admin = true,
+	help = "Fling every other player in turn",
+	run = function()
+		task.spawn(function()
+			for _, p in ipairs(Players:GetPlayers()) do
+				if p ~= player then
+					doFling(p)
+					task.wait(0.5)
+				end
+			end
+		end)
+		return "flinging everyone..."
+	end,
+}
+add{
+	name = "goto",
+	alias = { "to" },
+	args = "<player>",
+	group = "Admin",
+	admin = true,
+	help = "Teleport yourself to a player",
+	run = function(c)
+		local t = hubFindPlayer(c.arg)
+		local thrp = t and t.Character and t.Character:FindFirstChild("HumanoidRootPart")
+		local myhrp = player.Character and player.Character:FindFirstChild("HumanoidRootPart")
+		if thrp and myhrp then
+			myhrp.CFrame = thrp.CFrame + Vector3.new(0, 0, 3)
+			return "went to " .. t.Name
+		end
+		return "player not found"
+	end,
+}
+add{
+	name = "spectate",
+	alias = { "spec" },
+	args = "<player>",
+	group = "Admin",
+	admin = true,
+	help = "Watch a player's character",
+	run = function(c)
+		local t = hubFindPlayer(c.arg)
+		local hum = t and t.Character and t.Character:FindFirstChildOfClass("Humanoid")
+		if hum then
+			workspace.CurrentCamera.CameraSubject = hum
+			return "spectating " .. t.Name
+		end
+		return "player not found"
+	end,
+}
+add{
+	name = "unspectate",
+	alias = { "unspec" },
+	group = "Admin",
+	admin = true,
+	help = "Return the camera to yourself",
+	run = function()
+		local hum = player.Character and player.Character:FindFirstChildOfClass("Humanoid")
+		if hum then
+			workspace.CurrentCamera.CameraSubject = hum
+		end
+		return "camera reset"
+	end,
+}
+add{
+	name = "adminhelp",
+	alias = { "ahelp" },
+	group = "Admin",
+	admin = true,
+	help = "List admin commands",
+	run = function()
+		local rows = { { text = "ADMIN COMMANDS", header = true } }
+		for _, s in ipairs(ORDER) do
+			if s.admin then
+				rows[#rows + 1] = { text = _G.prefix .. signature(s) .. "   -   " .. s.help }
+			end
+		end
+		listWindow("AdminHelp", "Admin Commands", rows)
+	end,
+}
+
 -- ---------------- dispatch ----------------
 hubRunCommand = function(input)
 	input = (input or ""):gsub("^%s+", ""):gsub("%s+$", "")
@@ -7985,6 +8179,14 @@ hubRunCommand = function(input)
 	local spec = CMDS[name:lower()]
 	if not spec then
 		say("unknown: " .. name .. " (type help)")
+		return
+	end
+	-- admin-only commands: a non-admin who runs one gets a "no permission" toast, not the action
+	if spec.admin and not isAdmin then
+		if H.notify then
+			H.notify({ title = "Admin", text = "No permission.", kind = "error" })
+		end
+		say("no permission")
 		return
 	end
 	local msg = spec.run({ arg = arg, n = tonumber(arg), raw = input })
@@ -8029,6 +8231,419 @@ end)
 
 H.runCommand = hubRunCommand
 end -- Command bar scope
+
+-- ===== DEBUG + ADMIN tabs (gated to ADMIN_IDS) =====
+-- Only built when the local player is an admin (the tabs don't even exist otherwise). Debug is
+-- a kitchen-sink of test buttons + live readouts; Admin is a player list with fling/goto/etc.
+do
+if H.isAdmin then
+local make, round, connect, click, COL = H.make, H.round, H.connect, H.click, H.COL
+local player, Players, RunService = H.player, H.Players, H.RunService
+
+-- shared sectioned page: sec() header, btn() action, stat() a live-updating label
+local function sectioned(page)
+	local scroll = make("ScrollingFrame", {
+		Size = UDim2.new(1, 0, 1, 0),
+		BackgroundTransparency = 1,
+		BorderSizePixel = 0,
+		ScrollBarThickness = 4,
+		ScrollBarImageColor3 = COL.sub,
+		CanvasSize = UDim2.new(0, 0, 0, 0),
+	}, page)
+	local layout = make("UIListLayout", {
+		Padding = UDim.new(0, 5),
+		SortOrder = Enum.SortOrder.LayoutOrder,
+	}, scroll)
+	connect(layout:GetPropertyChangedSignal("AbsoluteContentSize"), function()
+		scroll.CanvasSize = UDim2.new(0, 0, 0, layout.AbsoluteContentSize.Y + 6)
+	end)
+	local ord = 0
+	local function sec(text)
+		ord += 1
+		make("TextLabel", {
+			Size = UDim2.new(1, -6, 0, 18),
+			BackgroundTransparency = 1,
+			Font = Enum.Font.GothamBold,
+			TextSize = 11,
+			TextColor3 = COL.sub,
+			Text = string.upper(text),
+			TextXAlignment = Enum.TextXAlignment.Left,
+			LayoutOrder = ord,
+		}, scroll)
+	end
+	local function btn(text, fn)
+		ord += 1
+		local b = make("TextButton", {
+			Size = UDim2.new(1, -6, 0, 26),
+			BackgroundColor3 = COL.element,
+			Font = Enum.Font.GothamMedium,
+			TextSize = 12,
+			TextColor3 = COL.text,
+			Text = text,
+			AutoButtonColor = true,
+			BorderSizePixel = 0,
+			LayoutOrder = ord,
+		}, scroll)
+		round(b, 6)
+		connect(b.MouseButton1Click, function()
+			click()
+			local ok, err = pcall(fn)
+			if not ok then
+				H.notify({ title = "Debug", text = tostring(err), kind = "error" })
+			end
+		end)
+		return b
+	end
+	local function stat(initial)
+		ord += 1
+		local l = make("TextLabel", {
+			Size = UDim2.new(1, -6, 0, 20),
+			BackgroundColor3 = COL.element,
+			Font = Enum.Font.Code,
+			TextSize = 12,
+			TextColor3 = COL.text,
+			Text = initial or "",
+			TextXAlignment = Enum.TextXAlignment.Left,
+			BorderSizePixel = 0,
+			LayoutOrder = ord,
+		}, scroll)
+		round(l, 5)
+		make("UIPadding", { PaddingLeft = UDim.new(0, 8) }, l)
+		return l
+	end
+	return sec, btn, stat, scroll
+end
+
+local Stats = game:GetService("Stats")
+local function copy(v)
+	if setclipboard then
+		pcall(setclipboard, tostring(v))
+		H.notify({ title = "Debug", text = "copied: " .. tostring(v), kind = "success" })
+	else
+		H.notify({ title = "Debug", text = "no setclipboard", kind = "error" })
+	end
+end
+local function myHRP()
+	return player.Character and player.Character:FindFirstChild("HumanoidRootPart")
+end
+
+-- ---------------------------------------------------------------- DEBUG
+if H.debugPage then
+	local sec, btn, stat = sectioned(H.debugPage)
+
+	-- live readouts, refreshed ~4x a second
+	sec("Live stats")
+	local fpsL = stat("FPS: --")
+	local pingL = stat("Ping: --")
+	local memL = stat("Mem: --")
+	local posL = stat("Pos: --")
+	local cntL = stat("Players / Instances: --")
+
+	local frames, fps, last = 0, 0, tick()
+	connect(RunService.RenderStepped, function()
+		frames += 1
+		local now = tick()
+		if now - last >= 1 then
+			fps = frames
+			frames, last = 0, now
+		end
+	end)
+	local acc = 0
+	connect(RunService.Heartbeat, function(dt)
+		acc += dt
+		if acc < 0.25 then
+			return
+		end
+		acc = 0
+		fpsL.Text = "FPS: " .. fps
+		local ping = "--"
+		pcall(function()
+			ping = math.floor(Stats.Network.ServerStatsItem["Data Ping"]:GetValue()) .. " ms"
+		end)
+		pingL.Text = "Ping: " .. ping
+		local mem = "--"
+		pcall(function()
+			mem = string.format("%.0f MB", Stats:GetTotalMemoryUsageMb())
+		end)
+		memL.Text = "Mem: " .. mem
+		local hrp = myHRP()
+		if hrp then
+			local p = hrp.Position
+			posL.Text = string.format("Pos: %.1f, %.1f, %.1f", p.X, p.Y, p.Z)
+		end
+		cntL.Text = "Players: " .. #Players:GetPlayers() .. "  |  wsChildren: " .. #workspace:GetChildren()
+	end)
+
+	sec("Toasts")
+	btn("info toast", function()
+		H.notify({ title = "Info", text = "info toast test", kind = "info" })
+	end)
+	btn("success toast", function()
+		H.notify({ title = "Success", text = "success toast test", kind = "success" })
+	end)
+	btn("warn toast", function()
+		H.notify({ title = "Warn", text = "warn toast test", kind = "warn" })
+	end)
+	btn("error toast", function()
+		H.notify({ title = "Error", text = "error toast test", kind = "error" })
+	end)
+	btn("long toast", function()
+		H.notify({ title = "Long", text = string.rep("wordy ", 40), kind = "info" })
+	end)
+	btn("5x toast spam", function()
+		for i = 1, 5 do
+			H.notify({ title = "Spam " .. i, text = "toast #" .. i })
+		end
+	end)
+
+	sec("Copy / print")
+	btn("copy PlaceId", function()
+		copy(game.PlaceId)
+	end)
+	btn("copy JobId", function()
+		copy(game.JobId)
+	end)
+	btn("copy your UserId", function()
+		copy(player.UserId)
+	end)
+	btn("copy position", function()
+		local hrp = myHRP()
+		copy(hrp and tostring(hrp.Position) or "no character")
+	end)
+	btn("print game info", function()
+		print("[Debug] PlaceId", game.PlaceId, "JobId", game.JobId, "FE", workspace.FilteringEnabled)
+		print("[Debug] Players", #Players:GetPlayers(), "/", Players.MaxPlayers)
+		H.notify({ title = "Debug", text = "printed to console", kind = "success" })
+	end)
+	btn("print all players", function()
+		for _, p in ipairs(Players:GetPlayers()) do
+			print("[Debug]", p.Name, p.DisplayName, p.UserId)
+		end
+		H.notify({ title = "Debug", text = "players printed", kind = "success" })
+	end)
+	btn("print executor", function()
+		local exec = (identifyexecutor and identifyexecutor()) or (getexecutorname and getexecutorname()) or "unknown"
+		print("[Debug] executor:", exec)
+		H.notify({ title = "Executor", text = tostring(exec) })
+	end)
+
+	sec("Character")
+	btn("reset character", function()
+		local hum = player.Character and player.Character:FindFirstChildOfClass("Humanoid")
+		if hum then
+			hum.Health = 0
+		end
+	end)
+	btn("respawn (LoadCharacter)", function()
+		pcall(function()
+			player:LoadCharacter()
+		end)
+	end)
+	btn("to spawn", function()
+		local hrp = myHRP()
+		local spawn = workspace:FindFirstChildOfClass("SpawnLocation")
+		if hrp and spawn then
+			hrp.CFrame = spawn.CFrame + Vector3.new(0, 5, 0)
+		end
+	end)
+	local frozen = false
+	btn("freeze / unfreeze", function()
+		local hrp = myHRP()
+		if not hrp then
+			return
+		end
+		frozen = not frozen
+		hrp.Anchored = frozen
+		H.notify({ title = "Debug", text = frozen and "frozen" or "unfrozen" })
+	end)
+	btn("heal to full", function()
+		local hum = player.Character and player.Character:FindFirstChildOfClass("Humanoid")
+		if hum then
+			hum.Health = hum.MaxHealth
+		end
+	end)
+
+	sec("Highlight")
+	btn("highlight all players", function()
+		for _, p in ipairs(Players:GetPlayers()) do
+			if p ~= player and p.Character and not p.Character:FindFirstChild("DbgHL") then
+				local hl = Instance.new("Highlight")
+				hl.Name = "DbgHL"
+				hl.FillColor = Color3.fromRGB(255, 80, 80)
+				hl.Parent = p.Character
+			end
+		end
+		H.notify({ title = "Debug", text = "highlighted players", kind = "success" })
+	end)
+	btn("clear highlights", function()
+		for _, d in ipairs(workspace:GetDescendants()) do
+			if d.Name == "DbgHL" and d:IsA("Highlight") then
+				d:Destroy()
+			end
+		end
+		H.notify({ title = "Debug", text = "highlights cleared" })
+	end)
+
+	sec("Memory / errors")
+	btn("collectgarbage count", function()
+		H.notify({ title = "Lua mem", text = string.format("%.1f KB", collectgarbage("count")) })
+	end)
+	btn("force GC", function()
+		collectgarbage("collect")
+		H.notify({ title = "Debug", text = "GC ran", kind = "success" })
+	end)
+	btn("throw test error", function()
+		error("intentional debug error")
+	end)
+	btn("test friend ding + toast", function()
+		if H.friendDing then
+			H.friendDing()
+		end
+		H.notify({ title = "Friend joined", text = "test preview", kind = "success" })
+	end)
+
+	sec("Server")
+	btn("rejoin", function()
+		game:GetService("TeleportService"):Teleport(game.PlaceId, player)
+	end)
+	btn("server hop (smallest)", function()
+		H.runCommand("smallserver")
+	end)
+	btn("copy server time", function()
+		copy(workspace:GetServerTimeNow())
+	end)
+end
+
+-- ---------------------------------------------------------------- ADMIN
+if H.adminPage then
+	local sec, btn, _, scroll = sectioned(H.adminPage)
+
+	-- client-side velocity fling: overlap the target and pump velocity for a beat
+	local function fling(target)
+		local myhrp = myHRP()
+		local thrp = target and target.Character and target.Character:FindFirstChild("HumanoidRootPart")
+		if not (myhrp and thrp) then
+			return
+		end
+		local start = tick()
+		local conn
+		conn = RunService.Heartbeat:Connect(function()
+			if tick() - start > 0.6 or not thrp.Parent then
+				conn:Disconnect()
+				return
+			end
+			myhrp.CFrame = thrp.CFrame
+			myhrp.AssemblyLinearVelocity = Vector3.new(1, 1, 1) * 9e4
+			myhrp.AssemblyAngularVelocity = Vector3.new(1, 1, 1) * 9e4
+		end)
+	end
+	local function goTo(target)
+		local myhrp = myHRP()
+		local thrp = target and target.Character and target.Character:FindFirstChild("HumanoidRootPart")
+		if myhrp and thrp then
+			myhrp.CFrame = thrp.CFrame + Vector3.new(0, 0, 3)
+		end
+	end
+	local function spectate(target)
+		local hum = target and target.Character and target.Character:FindFirstChildOfClass("Humanoid")
+		if hum then
+			workspace.CurrentCamera.CameraSubject = hum
+		end
+	end
+
+	sec("All players")
+	btn("Fling ALL", function()
+		task.spawn(function()
+			for _, p in ipairs(Players:GetPlayers()) do
+				if p ~= player then
+					fling(p)
+					task.wait(0.5)
+				end
+			end
+		end)
+		H.notify({ title = "Admin", text = "flinging everyone...", kind = "warn" })
+	end)
+	btn("Spectate self (reset)", function()
+		local hum = player.Character and player.Character:FindFirstChildOfClass("Humanoid")
+		if hum then
+			workspace.CurrentCamera.CameraSubject = hum
+		end
+	end)
+
+	-- per-player rows, rebuilt on join/leave. Each row: name + Fling / Goto / Spectate
+	sec("Players")
+	local listHolder = make("Frame", {
+		BackgroundTransparency = 1,
+		Size = UDim2.new(1, -6, 0, 0),
+		AutomaticSize = Enum.AutomaticSize.Y,
+		LayoutOrder = 9999,
+	}, scroll)
+	make("UIListLayout", {
+		Padding = UDim.new(0, 4),
+		SortOrder = Enum.SortOrder.LayoutOrder,
+	}, listHolder)
+
+	local function rebuild()
+		for _, c in ipairs(listHolder:GetChildren()) do
+			if c:IsA("Frame") then
+				c:Destroy()
+			end
+		end
+		local i = 0
+		for _, p in ipairs(Players:GetPlayers()) do
+			if p ~= player then
+				i += 1
+				local rf = make("Frame", {
+					Size = UDim2.new(1, 0, 0, 48),
+					BackgroundColor3 = COL.element,
+					BorderSizePixel = 0,
+					LayoutOrder = i,
+				}, listHolder)
+				round(rf, 6)
+				make("TextLabel", {
+					Size = UDim2.new(1, -12, 0, 18),
+					Position = UDim2.new(0, 8, 0, 3),
+					BackgroundTransparency = 1,
+					Font = Enum.Font.GothamMedium,
+					TextSize = 12,
+					TextColor3 = COL.text,
+					Text = p.DisplayName .. "  (@" .. p.Name .. ")",
+					TextXAlignment = Enum.TextXAlignment.Left,
+					TextTruncate = Enum.TextTruncate.AtEnd,
+				}, rf)
+				local function act(text, xScale, xOff, wScale, col, fn)
+					local b = make("TextButton", {
+						Size = UDim2.new(wScale, -3, 0, 20),
+						Position = UDim2.new(xScale, xOff, 1, -23),
+						BackgroundColor3 = col,
+						Font = Enum.Font.GothamMedium,
+						TextSize = 11,
+						TextColor3 = Color3.new(1, 1, 1),
+						Text = text,
+						AutoButtonColor = false,
+						BorderSizePixel = 0,
+					}, rf)
+					round(b, 5)
+					connect(b.MouseButton1Click, function()
+						click()
+						pcall(fn, p)
+					end)
+				end
+				act("Fling", 0, 8, 0.33, COL.on, fling)
+				act("Goto", 0.34, 6, 0.32, COL.accent, goTo)
+				act("Spectate", 0.67, 4, 0.33, COL.accent, spectate)
+			end
+		end
+	end
+	rebuild()
+	connect(Players.PlayerAdded, rebuild)
+	connect(Players.PlayerRemoving, function()
+		task.defer(rebuild)
+	end)
+end
+
+end -- if H.isAdmin
+end -- Debug/Admin scope
 
 do -- ===== TAIL: dragging, keybinds, chat, cleanup, FPS overlay =====
 -- pulled out of H once, so the body below uses fast locals
