@@ -1330,24 +1330,13 @@ local function credits(duration)
 		ZIndex = 61,
 	}, card)
 	make("TextLabel", {
-		Size = UDim2.new(1, -24, 0, 18),
-		Position = UDim2.new(0, 12, 0, 102),
-		BackgroundTransparency = 1,
-		Font = Enum.Font.Gotham,
-		TextSize = 13,
-		TextColor3 = COL.text,
-		Text = "emotional support: Quan",
-		TextXAlignment = Enum.TextXAlignment.Center,
-		ZIndex = 61,
-	}, card)
-	make("TextLabel", {
 		Size = UDim2.new(1, -16, 0, 18),
 		Position = UDim2.new(0, 8, 0, 134),
 		BackgroundTransparency = 1,
 		Font = Enum.Font.Gotham,
 		TextSize = 12,
 		TextColor3 = COL.sub,
-		Text = "discord: Vertxxy - @vertxxy   Syn - @synfulfox__   Quan - @ekojj",
+		Text = "discord: Vertxxy - @vertxxy   Syn - @synfulfox__",
 		TextXAlignment = Enum.TextXAlignment.Center,
 		ZIndex = 61,
 	}, card)
@@ -2786,6 +2775,8 @@ local setFlySwitch, toggleFly = makeSwitch(flyPage, 0, false, function(on)
 		stopFly()
 	end
 end)
+
+--test
 
 row(flyPage, 36, "Speed (0-1000000)")
 local flyBox = make("TextBox", {
