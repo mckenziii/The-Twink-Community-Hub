@@ -249,35 +249,60 @@ H.animateAll = function(root)
 	end
 end
 
--- Pop a window/frame in on open: a quick scale-up with a slight overshoot. Uses its OWN
--- UIScale (windows already carry a separate resize UIScale), and both multiply -- it settles at
--- 1, so it leaves the resize scale untouched once done.
-H.popIn = function(frame)
-	-- reuse a named pop scale so re-opening a persistent window (settings, picker) doesn't
-	-- stack up UIScales; distinct from the unnamed resize UIScale
-	local s = frame:FindFirstChild("PopScale")
-	if not s then
-		s = make("UIScale", { Name = "PopScale", Scale = 0.92 }, frame)
-	else
-		s.Scale = 0.92
-	end
-	tweenE(s, 0.2, Enum.EasingStyle.Back, Enum.EasingDirection.Out, { Scale = 1 })
+-- Open/close animations scale the window's existing resize UIScale (Roblox honours only one
+-- UIScale per object, so a second would be ignored). UIScale scales from the top-left anchor,
+-- so to collapse toward the CENTRE we tween Position in lockstep: at scale s the top-left must
+-- sit at rest + size/2*(base - s). Both tweens share the same TweenInfo, so the centre stays
+-- mathematically fixed the whole way. `base` is the window's resting/resize scale. The current
+-- Position is always the resting one -- popOut restores it after collapsing, so a hide/re-open
+-- (or a window whose spot is set fresh each open, like the picker) always reads it correctly.
+local function shiftedPos(rest, w, h, base, s)
+	local k = (base - s) * 0.5
+	return UDim2.new(rest.X.Scale, rest.X.Offset + w * k, rest.Y.Scale, rest.Y.Offset + h * k)
 end
 
--- Close animation: shrink the window away, then run `done` (destroy it, or hide it). Guarded so
--- a double-click can't run `done` twice.
+H.popIn = function(frame)
+	local sc = frame:FindFirstChildOfClass("UIScale")
+	if not sc then
+		return
+	end
+	local base = H.scales[frame.Name] or 1
+	local rest = frame.Position
+	local w, h = frame.Size.X.Offset, frame.Size.Y.Offset
+	local startS = base * 0.7
+	sc.Scale = startS
+	frame.Position = shiftedPos(rest, w, h, base, startS)
+	local info = TweenInfo.new(0.22, Enum.EasingStyle.Back, Enum.EasingDirection.Out)
+	TweenService:Create(sc, info, { Scale = base }):Play()
+	TweenService:Create(frame, info, { Position = rest }):Play()
+end
+
+-- Close: collapse toward centre, then run `done` (destroy or hide). Restores the resting
+-- position (leaving the scale collapsed for popIn to reset) so re-opens land in the right spot.
+-- Guarded against a double-click.
 H.popOut = function(frame, done)
 	if frame:GetAttribute("Closing") then
 		return
 	end
 	frame:SetAttribute("Closing", true)
-	local s = frame:FindFirstChild("PopScale")
-	if not s then
-		s = make("UIScale", { Name = "PopScale", Scale = 1 }, frame)
+	local sc = frame:FindFirstChildOfClass("UIScale")
+	if not sc then
+		frame:SetAttribute("Closing", false)
+		if done then
+			done()
+		end
+		return
 	end
-	local tw = TweenService:Create(s, TweenInfo.new(0.13, Enum.EasingStyle.Quad, Enum.EasingDirection.In), { Scale = 0.85 })
+	local base = H.scales[frame.Name] or sc.Scale or 1
+	local rest = frame.Position
+	local w, h = frame.Size.X.Offset, frame.Size.Y.Offset
+	local target = base * 0.01
+	local info = TweenInfo.new(0.16, Enum.EasingStyle.Quad, Enum.EasingDirection.In)
+	TweenService:Create(sc, info, { Scale = target }):Play()
+	local tw = TweenService:Create(frame, info, { Position = shiftedPos(rest, w, h, base, target) })
 	tw:Play()
 	tw.Completed:Connect(function()
+		frame.Position = rest -- put it back (still at collapsed scale) for the next open
 		frame:SetAttribute("Closing", false)
 		if done then
 			done()
@@ -425,8 +450,8 @@ end
 -- divide AbsoluteContentSize -- which is already scaled -- by this, or a resized window sizes
 -- its scroll canvas scale-times-too-tall and you get blank space at the bottom.
 H.scaleOf = function(obj)
-	-- multiply every UIScale in the ancestry (a window carries both a resize scale and, while
-	-- opening, a pop-in scale), so canvas sizing stays correct with more than one in play
+	-- product of every UIScale in the ancestry (normally just the one resize scale, which the
+	-- open/close animation drives); content scales with it, so canvas sizing stays correct
 	local s = 1
 	local o = obj
 	while o do
@@ -1404,7 +1429,7 @@ local toggleSpeed = select(2, makeSwitch(speedPage, 0, false, function(on)
 	speedEnabled = on
 end))
 
-row(speedPage, 36, "Speed (0-99999)")
+row(speedPage, 36, "Speed (0-1000000)")
 local speedBox = make("TextBox", {
 	Size = UDim2.new(0, 78, 0, 26),
 	Position = UDim2.new(1, -78, 0, 34),
@@ -1439,7 +1464,7 @@ updateSpeedUI()
 connect(speedBox.FocusLost, function()
 	local n = tonumber(speedBox.Text)
 	if n then
-		_G.CFrameSpeed = math.clamp(n, 0, 99999)
+		_G.CFrameSpeed = math.clamp(n, 0, 1000000)
 	end
 	updateSpeedUI()
 end)
@@ -2544,7 +2569,7 @@ local round, click, row, makeSwitch, flyPage = H.round, H.click, H.row, H.makeSw
 
 local flyEnabled = false
 local flightSpeed = 50
-local FLY_MAX_SPEED = 9842774
+local FLY_MAX_SPEED = 1000000
 local awaitingFlyKey = false
 local flyConns = {}
 local flyGyro, flyVel
@@ -2762,7 +2787,7 @@ local setFlySwitch, toggleFly = makeSwitch(flyPage, 0, false, function(on)
 	end
 end)
 
-row(flyPage, 36, "Speed (0-9842774)")
+row(flyPage, 36, "Speed (0-1000000)")
 local flyBox = make("TextBox", {
 	Size = UDim2.new(0, 90, 0, 26),
 	Position = UDim2.new(1, -90, 0, 34),
@@ -3158,7 +3183,7 @@ end
 -- you asked for, not the one the game started with
 world.setBrightness = function(v)
 	world.capture()
-	v = math.clamp(v, 0, 999999999999999999999999)
+	v = math.clamp(v, 0, 1000000)
 	world.orig.Brightness = v
 	world.lighting.Brightness = v
 	return v
@@ -3862,7 +3887,7 @@ local function applyConfig(cfg)
 		end
 	end
 	if tonumber(cfg.cframeSpeed) then
-		_G.CFrameSpeed = math.clamp(tonumber(cfg.cframeSpeed), 0, 99999)
+		_G.CFrameSpeed = math.clamp(tonumber(cfg.cframeSpeed), 0, 1000000)
 		Speed.updateUI()
 	end
 	if tonumber(cfg.gravity) then
@@ -6919,7 +6944,7 @@ add{
 	bindable = true,
 	run = function(c)
 		if c.n then
-			_G.CFrameSpeed = math.clamp(c.n, 0, 99999)
+			_G.CFrameSpeed = math.clamp(c.n, 0, 1000000)
 			Speed.updateUI()
 			return "cframe speed " .. _G.CFrameSpeed
 		end
@@ -7527,6 +7552,7 @@ local function openBoardNotifier()
 	}, gui)
 	round(win, 10)
 	make("UIStroke", { Color = COL.stroke, Thickness = 1 }, win)
+	make("UIScale", { Scale = 1 }, win) -- so popIn/popOut have a scale to animate
 
 	local bar = make("TextLabel", {
 		Size = UDim2.new(1, -44, 0, 34),
@@ -7628,6 +7654,7 @@ local function openBoardNotifier()
 		}, gui)
 		round(logsWin, 10)
 		make("UIStroke", { Color = COL.stroke, Thickness = 1 }, logsWin)
+		make("UIScale", { Scale = 1 }, logsWin) -- so popIn/popOut have a scale to animate
 
 		local logsBar = make("TextLabel", {
 			Size = UDim2.new(1, -44, 0, 34),
@@ -7668,7 +7695,7 @@ local function openBoardNotifier()
 		}, logScroll)
 		make("UIPadding", {
 			PaddingTop = UDim.new(0, 8),
-			PaddingBottom = UDim.new(0, 8),
+			PaddingBottom = UDim.new(0, 20), -- extra room so the last log isn't jammed at the edge
 			PaddingLeft = UDim.new(0, 8),
 			PaddingRight = UDim.new(0, 8),
 		}, logScroll)
@@ -7759,7 +7786,14 @@ local function openBoardNotifier()
 			buildLogs()
 		end
 		logsShown = not logsShown
-		logsWin.Visible = logsShown
+		if logsShown then
+			logsWin.Visible = true
+			H.popIn(logsWin)
+		else
+			H.popOut(logsWin, function()
+				logsWin.Visible = false
+			end)
+		end
 	end))
 
 	track(connect(thing:GetPropertyChangedSignal("Text"), function()
