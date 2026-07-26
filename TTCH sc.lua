@@ -1279,7 +1279,7 @@ local function credits(duration)
 		current = nil
 	end
 
-	local W, HT = 440, 208
+	local W, HT = 440, 178
 	-- CanvasGroup so one GroupTransparency fades the whole panel; centred via AnchorPoint so
 	-- the UIScale pop grows from the middle
 	local card = make("CanvasGroup", {
@@ -1331,7 +1331,7 @@ local function credits(duration)
 	}, card)
 	make("TextLabel", {
 		Size = UDim2.new(1, -16, 0, 18),
-		Position = UDim2.new(0, 8, 0, 134),
+		Position = UDim2.new(0, 8, 0, 104),
 		BackgroundTransparency = 1,
 		Font = Enum.Font.Gotham,
 		TextSize = 12,
@@ -7235,6 +7235,44 @@ add{
 	help = "Open the Click TP window",
 	bindable = true,
 	run = openClickTp,
+}
+add{
+	name = "vcmute",
+	alias = { "mute" },
+	args = "<player>",
+	group = "Players",
+	help = "Mute a player's VC audio",
+	run = function(c)
+		local t = hubFindPlayer(c.arg)
+		if not t or not t.Character then
+			return "player not found"
+		end
+		for _, v in ipairs(t.Character:GetDescendants()) do
+			if v:IsA("AudioDeviceInput") then
+				v.Volume = 0
+			end
+		end
+		return "muted " .. t.Name
+	end,
+}
+add{
+	name = "vcunmute",
+	alias = { "unmute" },
+	args = "<player>",
+	group = "Players",
+	help = "Unmute a player's VC audio",
+	run = function(c)
+		local t = hubFindPlayer(c.arg)
+		if not t or not t.Character then
+			return "player not found"
+		end
+		for _, v in ipairs(t.Character:GetDescendants()) do
+			if v:IsA("AudioDeviceInput") then
+				v.Volume = 1
+			end
+		end
+		return "unmuted " .. t.Name
+	end,
 }
 
 -- ---------------- binds ----------------
