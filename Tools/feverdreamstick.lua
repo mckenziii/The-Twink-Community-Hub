@@ -57,7 +57,7 @@ local BITE_SOUND = "rbxassetid://120043778768093"
 
 local COLOUR = Color3.fromRGB(236, 148, 176)
 
-local SEG_HEIGHT = 100000
+local SEG_HEIGHT = 0.62
 local SEG_WIDTH = 0.85
 local SEGMENTS = 5 -- shaft segments, counting the Handle as the first
 
