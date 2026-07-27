@@ -3585,7 +3585,7 @@ local toolDefs = {
 		run = function()
 			loadstring(
 				game:HttpGet(
-					"https://raw.githubusercontent.com/mckenziii/The-Twink-Community-Hub/refs/heads/main/Tools/dildo.lua"
+					"https://raw.githubusercontent.com/mckenziii/The-Twink-Community-Hub/refs/heads/main/Tools/feverdreamstick.lua"
 				)
 			)()
 		end,
