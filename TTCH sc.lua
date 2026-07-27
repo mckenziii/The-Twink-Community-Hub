@@ -939,10 +939,10 @@ do
 	tabs["Back"].LayoutOrder = -1
 
 	-- "Game Specific" entry tab: lives in the default strip and opens game mode on click
-	makeTab("Game Specific", function()
+	makeTab("Games", function()
 		Games.enter()
 	end)
-	Games.default["Game Specific"] = true
+	Games.default["Games"] = true
 
 	-- Register a game tab from a place ID. The tab name is pulled off that ID at runtime
 	-- (MarketplaceService) so it always matches the real game; the fetch runs in task.spawn
