@@ -38,10 +38,16 @@ function checkForFile(file, text)
 	return false
 end
 
-if checkForFile("prefix.txt", "!") == true then
-	_G.prefix = readfile("prefix.txt")
+-- everything the hub writes lives under twinkhub/; make it before the first writefile,
+-- which won't create the parent folder on its own
+if makefolder and isfolder and not isfolder("twinkhub") then
+	pcall(makefolder, "twinkhub")
+end
+
+if checkForFile("twinkhub/prefix.txt", "!") == true then
+	_G.prefix = readfile("twinkhub/prefix.txt")
 else
-	_G.prefix = readfile("prefix.txt")
+	_G.prefix = readfile("twinkhub/prefix.txt")
 end
 
 local player = Players.LocalPlayer
@@ -6718,6 +6724,107 @@ local function say(msg)
 	end)
 end
 
+-- ---------------- user aliases ----------------
+-- `alias <command> <name>` lets a user coin their own short name for any command. The map
+-- lives in twinkhub/alias.json (alongside config.json and prefix.txt) so it survives a
+-- reload. Aliases are a dispatch-time FALLBACK only: hubRunCommand checks the real command
+-- registry first, so a user alias can never shadow anything built in.
+local HttpService = H.HttpService
+local ALIAS_FILE = "twinkhub/alias.json"
+local UserAliases = {} -- [aliasName] = commandName, both lowercased
+
+local function loadAliases()
+	if not (readfile and isfile) or not isfile(ALIAS_FILE) then
+		return
+	end
+	local ok, raw = pcall(readfile, ALIAS_FILE)
+	if not ok then
+		return
+	end
+	local ok2, data = pcall(function()
+		return HttpService:JSONDecode(raw)
+	end)
+	if not (ok2 and type(data) == "table") then
+		return
+	end
+	if data[1] ~= nil or next(data) == nil then
+		-- current format: a list of { "command": ..., "aliases": [...] } entries
+		for _, entry in ipairs(data) do
+			if type(entry) == "table" and type(entry.command) == "string" and type(entry.aliases) == "table" then
+				for _, n in ipairs(entry.aliases) do
+					if type(n) == "string" then
+						UserAliases[n:lower()] = entry.command:lower()
+					end
+				end
+			end
+		end
+	elseif type(data.aliases) == "table" then
+		-- older grouped format: { "aliases": [ { "command": ..., "names": [...] } ] }
+		for _, entry in ipairs(data.aliases) do
+			if type(entry) == "table" and type(entry.command) == "string" and type(entry.names) == "table" then
+				for _, n in ipairs(entry.names) do
+					if type(n) == "string" then
+						UserAliases[n:lower()] = entry.command:lower()
+					end
+				end
+			end
+		end
+	else
+		-- legacy flat format: { "<alias>": "<command>" } - still read it so old files load
+		for a, cmd in pairs(data) do
+			if type(a) == "string" and type(cmd) == "string" then
+				UserAliases[a:lower()] = cmd:lower()
+			end
+		end
+	end
+end
+
+-- HttpService:JSONEncode won't indent, so lay the file out by hand. The flat map is
+-- regrouped into one { command, aliases } block per command and each field is put on its
+-- own line, so a human opening alias.json can actually read it. Leaf strings still go
+-- through JSONEncode for correct escaping; JSONDecode reads the result straight back.
+local function serializeAliases()
+	local byCommand = {} -- command -> { aliasName, ... }
+	for aliasName, cmdName in pairs(UserAliases) do
+		byCommand[cmdName] = byCommand[cmdName] or {}
+		table.insert(byCommand[cmdName], aliasName)
+	end
+	local commands = {}
+	for cmdName in pairs(byCommand) do
+		table.insert(commands, cmdName)
+	end
+	table.sort(commands)
+
+	local lines = { "[" }
+	for ci, cmdName in ipairs(commands) do
+		local names = byCommand[cmdName]
+		table.sort(names)
+		lines[#lines + 1] = "    {"
+		lines[#lines + 1] = "        \"command\": " .. HttpService:JSONEncode(cmdName) .. ","
+		lines[#lines + 1] = "        \"aliases\": ["
+		for ni, n in ipairs(names) do
+			lines[#lines + 1] = "            " .. HttpService:JSONEncode(n) .. (ni < #names and "," or "")
+		end
+		lines[#lines + 1] = "        ]"
+		lines[#lines + 1] = "    }" .. (ci < #commands and "," or "")
+	end
+	lines[#lines + 1] = "]"
+	return table.concat(lines, "\n")
+end
+
+local function saveAliases()
+	if not writefile then
+		return false
+	end
+	-- writefile won't create parent folders, so make sure twinkhub/ is there first
+	if makefolder and isfolder and not isfolder("twinkhub") then
+		pcall(makefolder, "twinkhub")
+	end
+	return pcall(writefile, ALIAS_FILE, serializeAliases())
+end
+
+pcall(loadAliases)
+
 -- ---------------- command registry ----------------
 -- Adding a command is ONE add{} block. `help` and `bind help` are generated from this
 -- list, so they can never drift out of sync with what actually runs.
@@ -6754,6 +6861,18 @@ local function signature(s)
 		out = out .. " / " .. a
 	end
 	return s.args and (out .. " " .. s.args) or out
+end
+
+-- The most descriptive name for a command: its longest name/alias. Turns `ws` into
+-- `walkspeed`, `jp` into `jumppower`, while leaving already-verbose names (fullbright) be.
+local function commandLabel(spec)
+	local best = spec.name
+	for _, a in ipairs(spec.alias or {}) do
+		if #a > #best then
+			best = a
+		end
+	end
+	return best
 end
 
 -- ---------------- shared window helper ----------------
@@ -6891,6 +7010,40 @@ local function openBindHelp()
 		end
 	end
 	listWindow("BindHelp", "Bindable actions", rows)
+end
+
+-- `alias list` window: mirrors alias.json - one command as a header, its own aliases as
+-- indented rows underneath, same grouping the file uses.
+local function openAliasList()
+	local byCommand = {} -- main command name -> { aliasName, ... }
+	for aliasName, cmdName in pairs(UserAliases) do
+		-- group under the command's descriptive name (`walkspeed`, not `ws`), so a terse
+		-- stored value still lands in the same section as the verbose one
+		local spec = CMDS[cmdName]
+		local mainName = spec and commandLabel(spec) or cmdName
+		byCommand[mainName] = byCommand[mainName] or {}
+		table.insert(byCommand[mainName], aliasName)
+	end
+	local commands = {}
+	for cmdName in pairs(byCommand) do
+		commands[#commands + 1] = cmdName
+	end
+	table.sort(commands)
+
+	local rows = {}
+	if #commands == 0 then
+		rows[#rows + 1] = { text = "no aliases yet - try  alias <command> <name>", header = true }
+	else
+		for _, cmdName in ipairs(commands) do
+			rows[#rows + 1] = { text = cmdName, header = true }
+			local names = byCommand[cmdName]
+			table.sort(names)
+			for _, n in ipairs(names) do
+				rows[#rows + 1] = { text = n }
+			end
+		end
+	end
+	listWindow("AliasList", "Aliases", rows)
 end
 
 -- ---------------- lifted windows ----------------
@@ -7341,8 +7494,62 @@ add{
 		end
 
 		_G.prefix = c.arg
-		writefile("prefix.txt", tostring(c.arg))
+		writefile("twinkhub/prefix.txt", tostring(c.arg))
 		return "Prefix changed to '" .. c.arg .. "'"
+	end,
+}
+add{
+	name = "alias",
+	args = "<command> <name>",
+	group = "Hub",
+	help = "Make your own name for a command. Also: alias list / alias remove <name> / alias clear",
+	run = function(c)
+		local first, rest = c.arg:match("^(%S*)%s*(.-)$")
+		first = first:lower()
+
+		-- alias / alias help / alias list -> open the grouped window
+		if first == "" or first == "help" or first == "list" then
+			openAliasList()
+			return
+		end
+
+		if first == "clear" then
+			for a in pairs(UserAliases) do
+				UserAliases[a] = nil
+			end
+			saveAliases()
+			return "aliases cleared"
+		end
+
+		if first == "remove" or first == "rm" or first == "del" then
+			local target = (rest:match("^(%S+)") or ""):lower()
+			if UserAliases[target] then
+				UserAliases[target] = nil
+				saveAliases()
+				return "removed alias '" .. target .. "'"
+			end
+			return "no alias '" .. target .. "'"
+		end
+
+		-- otherwise: alias <command> <name>
+		local cmdName = first
+		local aliasName = (rest:match("^(%S+)") or ""):lower()
+		if aliasName == "" then
+			return "usage: alias <command> <name>"
+		end
+		local spec = CMDS[cmdName]
+		if not spec then
+			return "unknown command: " .. cmdName
+		end
+		if CMDS[aliasName] then
+			return "'" .. aliasName .. "' is already a command"
+		end
+		-- store the command's most descriptive name, so alias.json and the list read
+		-- `walkspeed` / `jumppower` rather than the terse `ws` / `jp` you may have typed
+		local label = commandLabel(spec)
+		UserAliases[aliasName] = label
+		saveAliases()
+		return "alias '" .. aliasName .. "' -> " .. label
 	end,
 }
 add{
@@ -8882,6 +9089,14 @@ hubRunCommand = function(input)
 		return
 	end
 	local spec = CMDS[name:lower()]
+	if not spec then
+		-- fall back to a user-defined alias (arg after the name carries through, so a
+		-- `alias fly f` still lets `f 5` run `fly 5`)
+		local aliased = UserAliases[name:lower()]
+		if aliased then
+			spec = CMDS[aliased]
+		end
+	end
 	if not spec then
 		say("unknown: " .. name .. " (type help)")
 		return
