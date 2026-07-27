@@ -1,7 +1,7 @@
 --[[
 	Edible Dildo
-	Builds a segmented edible in your Backpack. Equip it, click to take a bite --
-	each bite takes the top segment off, so it gets shorter as you go.
+	Builds a segmented prop in your Backpack. Equip it and click for a sound and a
+	puff of particles from the tip. Nothing gets consumed -- click as much as you like.
 
 	Client-side only: it exists on your screen, nobody else sees it.
 --]]
@@ -64,7 +64,13 @@ local SEGMENTS = 5 -- shaft segments, counting the Handle as the first
 local BALL_SIZE = 0.80
 local BALL_SPREAD = 0.42 -- how far out from centre each one sits on X
 
-local tool, edible
+-- rbxasset:// ships inside the client rather than being fetched from the catalog, so unlike the
+-- bite sound this can't fail to resolve in a given game.
+local PARTICLE_TEXTURE = "rbxasset://textures/particles/smoke_main.dds"
+local PARTICLE_RATE = 5 -- steady trickle; set to 0 for bursts only
+local PARTICLE_BURST = 24 -- extra puff on each click
+
+local tool, emitter
 
 -- Roblox's built-in Cylinder PartType lies along X, which is never what you want for a stack.
 -- A CylinderMesh on a Block part gives a Y-axis cylinder instead, so everything stacks on Y.
@@ -83,7 +89,7 @@ end
 local function build()
 	tool = Instance.new("Tool")
 	tool.Name = "Edible Dildo"
-	tool.ToolTip = "click to eat"
+	tool.ToolTip = "click it"
 	tool.CanBeDropped = true
 	tool.GripPos = Vector3.new(0, -0.2, 0)
 
@@ -92,7 +98,6 @@ local function build()
 	local handle = cylinder("Handle", SEG_WIDTH, SEG_HEIGHT)
 	handle.Parent = tool
 
-	edible = {}
 	local height = SEG_HEIGHT / 2 -- running offset from the handle's centre
 
 	local function weldTo(part)
@@ -106,12 +111,11 @@ local function build()
 		weld.Parent = part
 	end
 
-	-- goes on top of the running stack, and is something you can bite off
+	-- goes on top of the running stack
 	local function stack(part)
 		part.CFrame = handle.CFrame * CFrame.new(0, height + part.Size.Y / 2, 0)
 		weldTo(part)
 		height = height + part.Size.Y
-		edible[#edible + 1] = part
 	end
 
 	local function sphere(name, size)
@@ -124,8 +128,6 @@ local function build()
 		return s
 	end
 
-	-- Deliberately NOT in `edible`: bites come off the top, so these stay put until the whole
-	-- thing is gone, at which point destroying the Tool takes them with it.
 	for i, side in ipairs({ -1, 1 }) do
 		local b = sphere("Ball" .. i, BALL_SIZE)
 		b.CFrame = handle.CFrame * CFrame.new(side * BALL_SPREAD, -SEG_HEIGHT / 2 + 0.05, 0)
@@ -136,6 +138,41 @@ local function build()
 		stack(cylinder("Seg" .. i, SEG_WIDTH, SEG_HEIGHT))
 	end
 	stack(sphere("Tip", SEG_WIDTH))
+
+	-- The emitter rides its own invisible part parked just above the tip, rather than sitting on
+	-- the tip itself -- keeps the emission point independent of the geometry.
+	local nozzle = Instance.new("Part")
+	nozzle.Name = "Nozzle"
+	nozzle.Size = Vector3.new(0.2, 0.2, 0.2)
+	nozzle.Transparency = 1
+	nozzle.CanCollide = false
+	nozzle.Massless = true
+	nozzle.Parent = tool
+
+	local nozzleWeld = Instance.new("Weld")
+	nozzleWeld.Part0 = handle
+	nozzleWeld.Part1 = nozzle
+	nozzleWeld.C0 = CFrame.new(0, height + 0.15, 0) -- just above the tip
+	nozzleWeld.Parent = handle
+
+	emitter = Instance.new("ParticleEmitter")
+	emitter.Texture = PARTICLE_TEXTURE
+	emitter.Color = ColorSequence.new(Color3.new(1, 1, 1))
+	emitter.Size = NumberSequence.new({
+		NumberSequenceKeypoint.new(0, 0.30),
+		NumberSequenceKeypoint.new(1, 0),
+	})
+	emitter.Transparency = NumberSequence.new({
+		NumberSequenceKeypoint.new(0, 0.15),
+		NumberSequenceKeypoint.new(1, 1),
+	})
+	emitter.Lifetime = NumberRange.new(0.5, 1.0)
+	emitter.Speed = NumberRange.new(5, 9)
+	emitter.SpreadAngle = Vector2.new(14, 14)
+	emitter.Acceleration = Vector3.new(0, -20, 0) -- arc over instead of going straight up forever
+	emitter.EmissionDirection = Enum.NormalId.Top
+	emitter.Rate = PARTICLE_RATE
+	emitter.Parent = nozzle
 
 	giveTool(tool)
 	return tool
@@ -156,38 +193,20 @@ local function chomp()
 	end)
 end
 
-local eaten = 0
-
-local function bite()
-	local top = table.remove(edible) -- topmost remaining segment
-	if not top then
-		return
+-- Nothing is consumed: the tool stays whole and a click is just sound plus a puff, as many
+-- times as you like.
+local function onClick()
+	if emitter then
+		emitter:Emit(PARTICLE_BURST)
 	end
-
 	chomp()
-	top:Destroy()
-	eaten = eaten + 1
-
-	if #edible > 0 then
-		return
-	end
-
-	-- nothing left but the base in your hand
-	chomp()
-	task.wait(0.25)
-	if tool then
-		tool:Destroy()
-		tool = nil
-	end
-	notify(("gone. %d bites."):format(eaten))
 end
 
 local function spawnEdible()
 	if tool then
 		tool:Destroy()
 	end
-	eaten = 0
-	build().Activated:Connect(bite)
+	build().Activated:Connect(onClick)
 end
 
 spawnEdible()
