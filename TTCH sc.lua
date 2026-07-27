@@ -1071,6 +1071,19 @@ H.pages, H.tabs, H.selectTab, H.makeTab = pages, tabs, selectTab, makeTab
 H.isAdmin, H.ADMIN_IDS = isAdmin, ADMIN_IDS
 H.debugPage = debugPage
 H.row, H.makeSwitch = row, makeSwitch
+-- Debug "unlock values" pulls the guard rails off user-entered numbers. Off (the default) this is
+-- exactly math.clamp; on, it hands the raw value straight through. Only *input* clamps route here.
+-- UI scale, colour-picker normalisation, camera pitch and the tab-strip scroll keep their real
+-- clamps on purpose: those feed geometry, not gameplay, and unbounded values there just break the
+-- hub itself rather than doing anything interesting. Engine limits (FOV's 1-120, for one) still
+-- apply underneath -- this only removes OUR ceiling, it can't raise Roblox's.
+H.unlockValues = false
+H.clampV = function(v, lo, hi)
+	if H.unlockValues then
+		return v
+	end
+	return math.clamp(v, lo, hi)
+end
 H.titleBar, H.conns = titleBar, conns
 H.speedPage, H.gravPage, H.espPage, H.hitboxPage = speedPage, gravPage, espPage, hitboxPage
 H.playerPage, H.flyPage, H.movePage, H.toolsPage = playerPage, flyPage, movePage, toolsPage
@@ -1453,7 +1466,7 @@ updateSpeedUI()
 connect(speedBox.FocusLost, function()
 	local n = tonumber(speedBox.Text)
 	if n then
-		_G.CFrameSpeed = math.clamp(n, 0, 1000000)
+		_G.CFrameSpeed = H.clampV(n, 0, 1000000)
 	end
 	updateSpeedUI()
 end)
@@ -1559,7 +1572,7 @@ end))
 connect(gravBox.FocusLost, function()
 	local n = tonumber(gravBox.Text)
 	if n then
-		customGravity = math.clamp(n, 0, 500)
+		customGravity = H.clampV(n, 0, 500)
 		if gravEnabled then
 			applyGravity(customGravity) -- live-update while the switch is on
 		end
@@ -1582,7 +1595,7 @@ H.Grav = {
 		return customGravity
 	end,
 	setCustom = function(v)
-		customGravity = math.clamp(v, 0, 500)
+		customGravity = H.clampV(v, 0, 500)
 		if gravEnabled then
 			applyGravity(customGravity)
 		end
@@ -2052,7 +2065,7 @@ round(hbBox, 6)
 connect(hbBox.FocusLost, function()
 	local n = tonumber(hbBox.Text)
 	if n then
-		hitboxSize = math.clamp(n, 1, 10)
+		hitboxSize = H.clampV(n, 1, 10)
 	end
 	hbBox.Text = tostring(hitboxSize)
 end)
@@ -2090,7 +2103,7 @@ H.Hitbox = {
 		return hitboxSize
 	end,
 	setSize = function(v)
-		hitboxSize = math.clamp(v, 1, 10)
+		hitboxSize = H.clampV(v, 1, 10)
 		hbBox.Text = tostring(hitboxSize)
 	end,
 }
@@ -2796,7 +2809,7 @@ round(flyBox, 6)
 connect(flyBox.FocusLost, function()
 	local n = tonumber(flyBox.Text)
 	if n then
-		flightSpeed = math.clamp(n, 0, FLY_MAX_SPEED)
+		flightSpeed = H.clampV(n, 0, FLY_MAX_SPEED)
 	end
 	flyBox.Text = tostring(flightSpeed)
 end)
@@ -2805,7 +2818,7 @@ end)
 local function doSfly(arg)
 	local n = tonumber(arg)
 	if n then
-		flightSpeed = math.clamp(n, 0, FLY_MAX_SPEED)
+		flightSpeed = H.clampV(n, 0, FLY_MAX_SPEED)
 		flyBox.Text = tostring(flightSpeed)
 		if not flyEnabled then
 			toggleFly()
@@ -2886,7 +2899,7 @@ H.Fly = {
 		return flightSpeed
 	end,
 	setSpeed = function(v)
-		flightSpeed = math.clamp(v, 0, FLY_MAX_SPEED)
+		flightSpeed = H.clampV(v, 0, FLY_MAX_SPEED)
 		flyBox.Text = tostring(flightSpeed)
 	end,
 }
@@ -3004,7 +3017,7 @@ round(wsBox, 6)
 connect(wsBox.FocusLost, function()
 	local n = tonumber(wsBox.Text)
 	if n then
-		walkSpeed = math.clamp(n, 0, 500)
+		walkSpeed = H.clampV(n, 0, 500)
 		applyWalkSpeed()
 	end
 	wsBox.Text = tostring(walkSpeed)
@@ -3028,7 +3041,7 @@ round(jpBox, 6)
 connect(jpBox.FocusLost, function()
 	local n = tonumber(jpBox.Text)
 	if n then
-		jumpPower = math.clamp(n, 0, 500)
+		jumpPower = H.clampV(n, 0, 500)
 		applyJumpPower()
 	end
 	jpBox.Text = tostring(jumpPower)
@@ -3055,7 +3068,7 @@ H.Move = {
 	-- spin: no arg toggles, a number sets the speed and turns it on (same shape as sfly)
 	spin = function(v)
 		if v then
-			spinSpeed = math.clamp(v, -50, 50)
+			spinSpeed = H.clampV(v, -50, 50)
 			spinEnabled = true
 		else
 			spinEnabled = not spinEnabled
@@ -3066,7 +3079,7 @@ H.Move = {
 		return walkSpeed
 	end,
 	setWalkSpeed = function(v)
-		walkSpeed = math.clamp(v, 0, 500)
+		walkSpeed = H.clampV(v, 0, 500)
 		wsBox.Text = tostring(walkSpeed)
 		applyWalkSpeed()
 	end,
@@ -3074,7 +3087,7 @@ H.Move = {
 		return jumpPower
 	end,
 	setJumpPower = function(v)
-		jumpPower = math.clamp(v, 0, 500)
+		jumpPower = H.clampV(v, 0, 500)
 		jpBox.Text = tostring(jumpPower)
 		applyJumpPower()
 	end,
@@ -3166,7 +3179,15 @@ end
 world.applyFov = function()
 	local cam = workspace.CurrentCamera
 	if cam then
-		cam.FieldOfView = world.fov
+		-- FieldOfView is engine-limited to 1-120. With Debug's value unlock on, world.fov can sit
+		-- outside that, and a raw assign would throw and take the caller down with it -- so try the
+		-- real value, and fall back to the nearest legal one. The box keeps showing what you typed.
+		local ok = pcall(function()
+			cam.FieldOfView = world.fov
+		end)
+		if not ok then
+			cam.FieldOfView = math.clamp(world.fov, 1, 120)
+		end
 	end
 end
 
@@ -3174,7 +3195,7 @@ end
 -- you asked for, not the one the game started with
 world.setBrightness = function(v)
 	world.capture()
-	v = math.clamp(v, 0, 1000000)
+	v = H.clampV(v, 0, 1000000)
 	world.orig.Brightness = v
 	world.lighting.Brightness = v
 	return v
@@ -3182,7 +3203,7 @@ end
 
 world.setTime = function(v)
 	world.capture()
-	v = math.clamp(v, 0, 24) % 24
+	v = H.clampV(v, 0, 24) % 24
 	world.orig.ClockTime = v
 	world.lighting.ClockTime = v
 	return v
@@ -3287,6 +3308,20 @@ world.restore = function()
 	end)
 end
 
+-- The World page outgrew the 122px panel once anti-fling joined it, so everything below
+-- lives in a ScrollingFrame. world.page is repointed at that frame *before* any child is
+-- added, so every absolute row position below still means what it always did; pages["World"]
+-- still holds the outer frame, so selectTab keeps working untouched.
+world.scroll = make("ScrollingFrame", {
+	Size = UDim2.new(1, -6, 1, 0), -- -6 leaves the scrollbar its own gutter, clear of the switches
+	BackgroundTransparency = 1,
+	BorderSizePixel = 0,
+	ScrollBarThickness = 4,
+	ScrollBarImageColor3 = COL.sub,
+	CanvasSize = UDim2.new(0, 0, 0, 158), -- tallest row (infBtn at 128) + its 24px + a little slack
+}, world.page)
+world.page = world.scroll
+
 -- toggle halves captured so the commands drive the same switches the clicks do
 row(world.page, 0, "Fullbright")
 world.toggleFullbright = select(2, makeSwitch(world.page, 0, false, function(on)
@@ -3307,10 +3342,19 @@ world.toggleXray = select(2, makeSwitch(world.page, 48, false, function(on)
 	world.setXray(on)
 end))
 
-row(world.page, 76, "FOV (1-120)")
+-- Extra.antiflingSet lives in the EXTRAS block, which is built after this one, so the
+-- callback reaches through H at click time rather than capturing a nil now.
+row(world.page, 72, "Anti-fling")
+world.toggleAntifling = select(2, makeSwitch(world.page, 72, false, function(on)
+	if H.Extra and H.Extra.antiflingSet then
+		H.Extra.antiflingSet(on)
+	end
+end))
+
+row(world.page, 100, "FOV (1-120)")
 world.fovBox = make("TextBox", {
 	Size = UDim2.new(0, 78, 0, 26),
-	Position = UDim2.new(1, -78, 0, 74),
+	Position = UDim2.new(1, -78, 0, 98),
 	BackgroundColor3 = COL.element,
 	Font = Enum.Font.Gotham,
 	TextSize = 13,
@@ -3325,7 +3369,7 @@ round(world.fovBox, 6)
 connect(world.fovBox.FocusLost, function()
 	local n = tonumber(world.fovBox.Text)
 	if n then
-		world.fov = math.clamp(n, 1, 120)
+		world.fov = H.clampV(n, 1, 120)
 		world.applyFov()
 	end
 	world.fovBox.Text = tostring(world.fov)
@@ -3333,7 +3377,7 @@ end)
 
 world.infBtn = make("TextButton", {
 	Size = UDim2.new(1, 0, 0, 24),
-	Position = UDim2.new(0, 0, 0, 104),
+	Position = UDim2.new(0, 0, 0, 128),
 	BackgroundColor3 = COL.accent,
 	Font = Enum.Font.GothamMedium,
 	TextSize = 13,
@@ -3379,7 +3423,7 @@ make("UIPadding", {
 }, toolsScroll)
 
 -- add a tool by giving it a name + run function; unset slots stay placeholders
-local slots = 11
+local slots = 12
 
 local toolDefs = {
 
@@ -3487,6 +3531,17 @@ local toolDefs = {
 			loadstring(
 				game:HttpGet(
 					"https://raw.githubusercontent.com/mckenziii/smoke-your-lungs-out/refs/heads/main/smoke%20your%20lungs%20out%20sc"
+				)
+			)()
+		end,
+	},
+
+	[12] = {
+		name = "Sandwich",
+		run = function()
+			loadstring(
+				game:HttpGet(
+					"https://raw.githubusercontent.com/mckenziii/The-Twink-Community-Hub/refs/heads/main/Tools/sandwich.lua"
 				)
 			)()
 		end,
@@ -5202,11 +5257,11 @@ Extra.airIsOn = function()
 	return airOn
 end
 Extra.airNudge = function(d)
-	airOffset = math.clamp(airOffset + d, -50, 50)
+	airOffset = H.clampV(airOffset + d, -50, 50)
 	return airOffset
 end
 Extra.airSetOffset = function(v)
-	airOffset = math.clamp(tonumber(v) or airOffset, -50, 50)
+	airOffset = H.clampV(tonumber(v) or airOffset, -50, 50)
 	return airOffset
 end
 connect(RunService.Heartbeat, function()
@@ -5267,7 +5322,7 @@ local function hipApply()
 	end
 end
 Extra.setHip = function(v)
-	hipValue = math.clamp(tonumber(v) or 0, 0, 100)
+	hipValue = H.clampV(tonumber(v) or 0, 0, 100)
 	hipApply()
 	return hipValue
 end
@@ -5304,9 +5359,133 @@ connect(RunService.Heartbeat, function()
 end)
 
 -- ---------------- anti-fling ----------------
+-- Three layers, cheapest first:
+--   1. park every other player's root every frame  -- stops the hit ever landing
+--   2. drop their collisions                       -- no contact, no momentum transfer
+--   3. snap back to a trailing anchor              -- catches whatever still gets through
+-- Clamping our own root (the old approach) was layer 3 only, and lost to anyone who grabbed
+-- a limb instead of the root.
 local flingOn = false
+local FLING_ANCHOR_NAME = "TTCH_AntiFlingAnchor"
+-- a reload runs cleanup, but an executor-killed session may not have; drop any stale anchor
+local staleAnchor = workspace:FindFirstChild(FLING_ANCHOR_NAME)
+if staleAnchor then
+	staleAnchor:Destroy()
+end
+local flingAnchor = Instance.new("Part")
+flingAnchor.Name = FLING_ANCHOR_NAME
+flingAnchor.Anchored = true
+flingAnchor.CanCollide = false
+flingAnchor.CanQuery = false
+flingAnchor.CanTouch = false
+flingAnchor.Transparency = 1
+flingAnchor.Parent = workspace
+local flingAnchorFollows = true
+
+-- park the anchor on our current spot. MUST run before the first fling can be detected: a fresh
+-- Part sits at (0,0,0), so an un-seeded anchor would "rescue" us straight into the void.
+local function flingSeedAnchor()
+	local hrp = getHRP()
+	if not hrp then
+		return
+	end
+	local pos = hrp.Position + Vector3.new(0, 2, 0)
+	flingAnchor.CFrame = CFrame.lookAt(pos, pos + hrp.CFrame.LookVector)
+end
+
+-- restore our parts to material defaults; nil means "inherit", which is what they had before us
+local function flingResetParts()
+	local c = player.Character
+	if not c then
+		return
+	end
+	for _, v in ipairs(c:GetDescendants()) do
+		if v:IsA("BasePart") then
+			v.CustomPhysicalProperties = nil
+		end
+	end
+end
+
+-- Player collisions. A fling needs *contact* to hand you momentum, so the hardest counter is to
+-- stop other characters existing for our local physics sim at all. We don't own their parts, but
+-- CanCollide is read locally when our own assembly resolves contact -- so clearing it here never
+-- replicates: they still see us solid, nothing they throw at us can move us. Weak keys so parts
+-- from despawned characters fall out of the table on their own.
+-- Set, not a map: we only ever record parts that were solid, so restoring is always "back to true".
+local flingCollide = setmetatable({}, { __mode = "k" })
+
+local function flingDropCollisions()
+	for _, p in ipairs(Players:GetPlayers()) do
+		if p ~= player then
+			local oc = p.Character
+			if oc then
+				for _, v in ipairs(oc:GetDescendants()) do
+					-- only parts that are actually solid; anything already false stays untouched
+					-- so we never "restore" a collision the game never had
+					if v:IsA("BasePart") and v.CanCollide then
+						flingCollide[v] = true
+						v.CanCollide = false
+					end
+				end
+			end
+		end
+	end
+end
+
+-- Roblox's floor for density is 0.01; a literal 0 throws. Built once -- this gets assigned to
+-- every tracked root every frame, and allocating a fresh one each time is pure garbage.
+local FLING_LIMP = PhysicalProperties.new(0.01, 0, 0, 0, 0)
+local flingLimped = setmetatable({}, { __mode = "k" }) -- roots we overwrote; restore to nil
+
+-- The actual fling mechanism is someone spinning their OWN root up and touching you, so the
+-- counter is to park their root rather than to wait until we're already airborne and correct for
+-- it. Roots only (not every descendant): it's what does the flinging, and this runs per frame.
+local function flingDefangOthers()
+	for _, p in ipairs(Players:GetPlayers()) do
+		if p ~= player then
+			local oc = p.Character
+			local ohrp = oc and oc:FindFirstChild("HumanoidRootPart")
+			if ohrp then
+				flingLimped[ohrp] = true
+				ohrp.AssemblyLinearVelocity = Vector3.zero
+				ohrp.AssemblyAngularVelocity = Vector3.zero
+				ohrp.CustomPhysicalProperties = FLING_LIMP
+			end
+		end
+	end
+end
+
+local function flingRestoreOthers()
+	for part in pairs(flingCollide) do
+		pcall(function()
+			if part.Parent then
+				part.CanCollide = true
+			end
+		end)
+		flingCollide[part] = nil
+	end
+	for part in pairs(flingLimped) do
+		pcall(function()
+			if part.Parent then
+				part.CustomPhysicalProperties = nil
+			end
+		end)
+		flingLimped[part] = nil
+	end
+end
+
 Extra.antiflingSet = function(on)
 	flingOn = on
+	if on then
+		-- both immediate: waiting for the next 0.3s tick would leave a window where a fling
+		-- lands against a stale anchor and still-solid players
+		flingSeedAnchor()
+		flingDropCollisions()
+	else
+		flingAnchorFollows = true
+		flingResetParts()
+		flingRestoreOthers()
+	end
 	return flingOn
 end
 Extra.antiflingToggle = function()
@@ -5315,20 +5494,58 @@ end
 Extra.antiflingIsOn = function()
 	return flingOn
 end
-connect(RunService.Stepped, function()
+
+connect(RunService.RenderStepped, function()
 	if not flingOn then
 		return
 	end
-	local hrp = getHRP()
-	if not hrp then
+	local c = player.Character
+	local hrp, hum = getHRP(), getHum()
+	if not c or not hrp or not hum then
 		return
 	end
-	-- flings work by pumping absurd spin/velocity into your root; clamp both back down
-	if hrp.AssemblyAngularVelocity.Magnitude > 30 then
-		hrp.AssemblyAngularVelocity = Vector3.zero
+
+	-- ragdoll/falling states are how most flings keep you helpless once launched
+	hum:SetStateEnabled(Enum.HumanoidStateType.Ragdoll, false)
+	hum:SetStateEnabled(Enum.HumanoidStateType.FallingDown, false)
+
+	-- preventive, every frame, spike or not: stop the hit landing rather than correct for it after
+	flingDefangOthers()
+
+	if hrp.AssemblyLinearVelocity.Magnitude > 100 or hrp.AssemblyAngularVelocity.Magnitude > 50 then
+		-- something got through anyway -- go limp so nothing can keep feeding momentum in,
+		-- then snap back to the anchor
+		flingAnchorFollows = false
+		for _, v in ipairs(c:GetDescendants()) do
+			if v:IsA("BasePart") then
+				v.AssemblyAngularVelocity = Vector3.zero
+				v.AssemblyLinearVelocity = Vector3.zero
+				v.CustomPhysicalProperties = FLING_LIMP
+			end
+		end
+		hrp.CFrame = flingAnchor.CFrame
+	else
+		flingAnchorFollows = true
 	end
-	if hrp.AssemblyLinearVelocity.Magnitude > 120 then
-		hrp.AssemblyLinearVelocity = Vector3.new(0, hrp.AssemblyLinearVelocity.Y, 0)
+end)
+
+-- anchor tracking is deliberately coarse (0.3s): sampling it every frame would let a fling that
+-- builds over a few frames drag the "safe" spot along with it
+task.spawn(function()
+	while task.wait(0.3) do
+		-- cleanup destroys the GUI; that's our signal to stop and leave the server as we found it
+		if not gui.Parent then
+			flingRestoreOthers()
+			flingAnchor:Destroy()
+			break
+		end
+		if flingOn then
+			-- re-run every tick: joins and respawns bring in fresh parts that default to solid
+			flingDropCollisions()
+			if flingAnchorFollows then
+				flingSeedAnchor()
+			end
+		end
 	end
 end)
 
@@ -6935,7 +7152,7 @@ add{
 	bindable = true,
 	run = function(c)
 		if c.n then
-			_G.CFrameSpeed = math.clamp(c.n, 0, 1000000)
+			_G.CFrameSpeed = H.clampV(c.n, 0, 1000000)
 			Speed.updateUI()
 			return "cframe speed " .. _G.CFrameSpeed
 		end
@@ -7140,7 +7357,7 @@ add{
 		if not c.n then
 			return "needs a number or 'reset'"
 		end
-		world.fov = math.clamp(c.n, 1, 120)
+		world.fov = H.clampV(c.n, 1, 120)
 		world.fovBox.Text = tostring(world.fov)
 		world.applyFov()
 		return "fov " .. world.fov
@@ -8163,7 +8380,7 @@ add{
 	help = "Resist fling attacks",
 	bindable = true,
 	run = function()
-		Extra.antiflingToggle()
+		world.toggleAntifling() -- drives the World-tab switch, which calls antiflingSet
 		return "anti-fling " .. onoff(Extra.antiflingIsOn())
 	end,
 }
@@ -8813,6 +9030,35 @@ if H.debugPage then
 			posL.Text = string.format("Pos: %.1f, %.1f, %.1f", p.X, p.Y, p.Z)
 		end
 		cntL.Text = "Players: " .. #Players:GetPlayers() .. "  |  wsChildren: " .. #workspace:GetChildren()
+	end)
+
+	sec("Limits")
+	-- Every numeric box in the hub is clamped to something sane (fov 1-120, walkspeed 0-500,
+	-- hitbox 1-10, ...). This lifts all of them at once. See H.clampV for exactly which clamps
+	-- are in scope -- UI scale, the colour picker and camera pitch keep theirs, since unbounded
+	-- values there break the hub rather than the game. Engine limits still apply underneath:
+	-- Roblox refuses a 500 FOV no matter what we hand it, so the camera falls back to the
+	-- nearest legal value while the box keeps showing what you typed.
+	local unlockBtn
+	local function unlockLabel()
+		return "unlock all values: " .. (H.unlockValues and "ON" or "off")
+	end
+	unlockBtn = btn(unlockLabel(), function()
+		H.unlockValues = not H.unlockValues
+		unlockBtn.Text = unlockLabel()
+		unlockBtn.BackgroundColor3 = H.unlockValues and COL.on or COL.element
+		H.notify({
+			title = "Debug",
+			text = H.unlockValues and "limits off - boxes take any number" or "limits restored",
+			kind = H.unlockValues and "warn" or "info",
+		})
+	end)
+	btn("print clamped ranges", function()
+		print("[Debug] unlockValues =", H.unlockValues)
+		print("[Debug] cframe speed 0-1e6 | gravity 0-500 | hitbox 1-10 | fly 0-FLY_MAX")
+		print("[Debug] walkspeed 0-500 | jump 0-500 | spin -50..50 | fov 1-120")
+		print("[Debug] brightness 0-1e6 | time 0-24 | airwalk -50..50 | hip 0-100")
+		H.notify({ title = "Debug", text = "ranges printed to console" })
 	end)
 
 	sec("Toasts")
