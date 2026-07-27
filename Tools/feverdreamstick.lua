@@ -15,7 +15,7 @@ local player = Players.LocalPlayer
 
 local function notify(text)
 	pcall(function()
-		StarterGui:SetCore("SendNotification", { Title = "Edible Dildo", Text = text, Duration = 4 })
+		StarterGui:SetCore("SendNotification", { Title = "feverdreamstick.exe", Text = text, Duration = 4 })
 	end)
 end
 
