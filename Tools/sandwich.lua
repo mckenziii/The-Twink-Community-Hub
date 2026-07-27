@@ -8,12 +8,52 @@
 
 local Players = game:GetService("Players")
 local Debris = game:GetService("Debris")
+local StarterGui = game:GetService("StarterGui")
+local SoundService = game:GetService("SoundService")
 
 local player = Players.LocalPlayer
 
+local function notify(text)
+	pcall(function()
+		StarterGui:SetCore("SendNotification", { Title = "Sandwich", Text = text, Duration = 4 })
+	end)
+end
+
+-- Handing the tool over fails silently in two ways, which is why "nothing happened" was the
+-- symptom rather than an error: FindFirstChildOfClass("Backpack") returns nil if we ran while
+-- dead or mid-respawn, and `Parent = nil` is perfectly legal -- the tool just goes nowhere. And
+-- plenty of games switch the Backpack CoreGui off, so the tool lands correctly but no hotbar
+-- ever renders to show it. Handle both, then equip so it's in your hand either way.
+local function giveTool(t)
+	pcall(function()
+		StarterGui:SetCoreGuiEnabled(Enum.CoreGuiType.Backpack, true)
+	end)
+
+	local backpack = player:FindFirstChildOfClass("Backpack") or player:WaitForChild("Backpack", 5)
+	if backpack then
+		t.Parent = backpack
+	else
+		-- no Backpack at all: parenting to the character equips it outright
+		local char = player.Character
+		if not char then
+			notify("no Backpack and no character - respawn and retry")
+			return false
+		end
+		t.Parent = char
+	end
+
+	local hum = player.Character and player.Character:FindFirstChildOfClass("Humanoid")
+	if hum then
+		pcall(function()
+			hum:EquipTool(t)
+		end)
+	end
+	return true
+end
+
 -- Swap this if it doesn't resolve in your game -- asset availability varies per experience,
 -- and a dead id here should never stop you eating, hence the pcall down in chomp().
-local BITE_SOUND = "rbxassetid://3765537148"
+local BITE_SOUND = "rbxassetid://91209592691035"
 
 -- UGC item to put on when you click. Named so we can spot it already being worn and not
 -- stack a second copy on every bite.
@@ -77,16 +117,20 @@ local function build()
 		layers[#layers + 1] = part
 	end
 
-	tool.Parent = player:FindFirstChildOfClass("Backpack")
+	giveTool(tool)
 	return tool
 end
 
-local function chomp(at)
+-- Parented to SoundService, NOT to the layer being eaten. The old version put the Sound inside
+-- the part and then destroyed that part on the very next line, which took the Sound down with it
+-- before it made a noise. 2D is the right call here anyway -- it's your own mouth, it shouldn't
+-- attenuate with distance.
+local function chomp()
 	pcall(function()
 		local s = Instance.new("Sound")
 		s.SoundId = BITE_SOUND
 		s.Volume = 1
-		s.Parent = at
+		s.Parent = SoundService
 		s:Play()
 		Debris:AddItem(s, 3)
 	end)
@@ -139,11 +183,7 @@ local function wearUGC()
 	if not acc then
 		if not warned then
 			warned = true -- once, not once per bite
-			game:GetService("StarterGui"):SetCore("SendNotification", {
-				Title = "Sandwich",
-				Text = "couldn't load UGC " .. UGC_ID,
-				Duration = 4,
-			})
+			notify("couldn't load UGC " .. UGC_ID)
 		end
 		return
 	end
@@ -168,7 +208,7 @@ local function bite()
 		return
 	end
 
-	chomp(top)
+	chomp()
 	top:Destroy()
 	eaten = eaten + 1
 
@@ -177,17 +217,13 @@ local function bite()
 	end
 
 	-- nothing left but the slice in your hand
-	chomp(tool:FindFirstChild("Handle") or player.Character)
+	chomp()
 	task.wait(0.25)
 	if tool then
 		tool:Destroy()
 		tool = nil
 	end
-	game:GetService("StarterGui"):SetCore("SendNotification", {
-		Title = "Sandwich",
-		Text = ("gone. %d bites."):format(eaten),
-		Duration = 4,
-	})
+	notify(("gone. %d bites."):format(eaten))
 end
 
 local function spawnSandwich()

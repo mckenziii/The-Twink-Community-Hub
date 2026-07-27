@@ -1338,7 +1338,7 @@ local function credits(duration)
 		Font = Enum.Font.GothamMedium,
 		TextSize = 15,
 		TextColor3 = COL.accent,
-		Text = "made by Vertxxy & synfulfox",
+		Text = "Made by synfulfox & Vertxxy",
 		TextXAlignment = Enum.TextXAlignment.Center,
 		ZIndex = 61,
 	}, card)
@@ -1349,7 +1349,7 @@ local function credits(duration)
 		Font = Enum.Font.Gotham,
 		TextSize = 12,
 		TextColor3 = COL.sub,
-		Text = "discord: Vertxxy - @vertxxy   Syn - @synfulfox__",
+		Text = "discord:  Syn - @synfulfox__	Vertxxy - @vertxxy",
 		TextXAlignment = Enum.TextXAlignment.Center,
 		ZIndex = 61,
 	}, card)

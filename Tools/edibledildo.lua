@@ -8,20 +8,61 @@
 
 local Players = game:GetService("Players")
 local Debris = game:GetService("Debris")
+local StarterGui = game:GetService("StarterGui")
+local SoundService = game:GetService("SoundService")
 
 local player = Players.LocalPlayer
 
+local function notify(text)
+	pcall(function()
+		StarterGui:SetCore("SendNotification", { Title = "Edible Dildo", Text = text, Duration = 4 })
+	end)
+end
+
+-- Handing the tool over fails silently in two ways, which is why "nothing happened" was the
+-- symptom rather than an error: FindFirstChildOfClass("Backpack") returns nil if we ran while
+-- dead or mid-respawn, and `Parent = nil` is perfectly legal -- the tool just goes nowhere. And
+-- plenty of games switch the Backpack CoreGui off, so the tool lands correctly but no hotbar
+-- ever renders to show it. Handle both, then equip so it's in your hand either way.
+local function giveTool(t)
+	pcall(function()
+		StarterGui:SetCoreGuiEnabled(Enum.CoreGuiType.Backpack, true)
+	end)
+
+	local backpack = player:FindFirstChildOfClass("Backpack") or player:WaitForChild("Backpack", 5)
+	if backpack then
+		t.Parent = backpack
+	else
+		-- no Backpack at all: parenting to the character equips it outright
+		local char = player.Character
+		if not char then
+			notify("no Backpack and no character - respawn and retry")
+			return false
+		end
+		t.Parent = char
+	end
+
+	local hum = player.Character and player.Character:FindFirstChildOfClass("Humanoid")
+	if hum then
+		pcall(function()
+			hum:EquipTool(t)
+		end)
+	end
+	return true
+end
+
 -- Swap this if it doesn't resolve in your game -- asset availability varies per experience,
 -- and a dead id here should never stop you eating, hence the pcall down in chomp().
-local BITE_SOUND = "rbxassetid://3765537148"
+local BITE_SOUND = "rbxassetid://120043778768093"
 
 local COLOUR = Color3.fromRGB(236, 148, 176)
 
-local BASE_HEIGHT = 0.40
-local BASE_WIDTH = 1.30
 local SEG_HEIGHT = 0.62
 local SEG_WIDTH = 0.85
-local SEGMENTS = 5
+local SEGMENTS = 5 -- shaft segments, counting the Handle as the first
+
+local BALL_SIZE = 0.80
+local BALL_SPREAD = 0.42 -- how far out from centre each one sits on X
 
 local tool, edible
 
@@ -46,51 +87,70 @@ local function build()
 	tool.CanBeDropped = true
 	tool.GripPos = Vector3.new(0, -0.2, 0)
 
-	-- The Handle IS the base, so the stack welds to something the Tool already anchors to
-	-- your hand -- no separate invisible handle to keep in sync.
-	local handle = cylinder("Handle", BASE_WIDTH, BASE_HEIGHT)
+	-- The Handle IS the bottom shaft segment, so the stack welds to something the Tool already
+	-- anchors to your hand -- no separate invisible handle to keep in sync.
+	local handle = cylinder("Handle", SEG_WIDTH, SEG_HEIGHT)
 	handle.Parent = tool
 
 	edible = {}
-	local height = BASE_HEIGHT / 2 -- running offset from the handle's centre
+	local height = SEG_HEIGHT / 2 -- running offset from the handle's centre
 
-	local function attach(part)
+	local function weldTo(part)
 		part.CanCollide = false
-		part.Massless = true -- a seven-part stack otherwise drags your arm down
-		part.CFrame = handle.CFrame * CFrame.new(0, height + part.Size.Y / 2, 0)
+		part.Massless = true -- an eight-part stack otherwise drags your arm down
 		part.Parent = tool
 
 		local weld = Instance.new("WeldConstraint")
 		weld.Part0 = handle
 		weld.Part1 = part
 		weld.Parent = part
+	end
 
+	-- goes on top of the running stack, and is something you can bite off
+	local function stack(part)
+		part.CFrame = handle.CFrame * CFrame.new(0, height + part.Size.Y / 2, 0)
+		weldTo(part)
 		height = height + part.Size.Y
 		edible[#edible + 1] = part
 	end
 
-	for i = 1, SEGMENTS do
-		attach(cylinder("Seg" .. i, SEG_WIDTH, SEG_HEIGHT))
+	local function sphere(name, size)
+		local s = Instance.new("Part")
+		s.Name = name
+		s.Shape = Enum.PartType.Ball
+		s.Size = Vector3.new(size, size, size)
+		s.Color = COLOUR
+		s.Material = Enum.Material.SmoothPlastic
+		return s
 	end
 
-	local tip = Instance.new("Part")
-	tip.Name = "Tip"
-	tip.Shape = Enum.PartType.Ball
-	tip.Size = Vector3.new(SEG_WIDTH, SEG_WIDTH, SEG_WIDTH)
-	tip.Color = COLOUR
-	tip.Material = Enum.Material.SmoothPlastic
-	attach(tip)
+	-- Deliberately NOT in `edible`: bites come off the top, so these stay put until the whole
+	-- thing is gone, at which point destroying the Tool takes them with it.
+	for i, side in ipairs({ -1, 1 }) do
+		local b = sphere("Ball" .. i, BALL_SIZE)
+		b.CFrame = handle.CFrame * CFrame.new(side * BALL_SPREAD, -SEG_HEIGHT / 2 + 0.05, 0)
+		weldTo(b)
+	end
 
-	tool.Parent = player:FindFirstChildOfClass("Backpack")
+	for i = 2, SEGMENTS do -- 1 is the Handle, already placed
+		stack(cylinder("Seg" .. i, SEG_WIDTH, SEG_HEIGHT))
+	end
+	stack(sphere("Tip", SEG_WIDTH))
+
+	giveTool(tool)
 	return tool
 end
 
-local function chomp(at)
+-- Parented to SoundService, NOT to the segment being eaten. The old version put the Sound inside
+-- the part and then destroyed that part on the very next line, which took the Sound down with it
+-- before it made a noise. 2D is the right call here anyway -- it's your own mouth, it shouldn't
+-- attenuate with distance.
+local function chomp()
 	pcall(function()
 		local s = Instance.new("Sound")
 		s.SoundId = BITE_SOUND
 		s.Volume = 1
-		s.Parent = at
+		s.Parent = SoundService
 		s:Play()
 		Debris:AddItem(s, 3)
 	end)
@@ -104,7 +164,7 @@ local function bite()
 		return
 	end
 
-	chomp(top)
+	chomp()
 	top:Destroy()
 	eaten = eaten + 1
 
@@ -113,17 +173,13 @@ local function bite()
 	end
 
 	-- nothing left but the base in your hand
-	chomp(tool:FindFirstChild("Handle") or player.Character)
+	chomp()
 	task.wait(0.25)
 	if tool then
 		tool:Destroy()
 		tool = nil
 	end
-	game:GetService("StarterGui"):SetCore("SendNotification", {
-		Title = "Edible Dildo",
-		Text = ("gone. %d bites."):format(eaten),
-		Duration = 4,
-	})
+	notify(("gone. %d bites."):format(eaten))
 end
 
 local function spawnEdible()
