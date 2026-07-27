@@ -1035,7 +1035,7 @@ do
 	-- ---- game tabs ----
 	-- Supply each game's place ID here; the tab is named from it (see Games.add). The fallback
 	-- label shows until the name resolves, or if the ID is left at 0.
-	local MICUP_PLACE_ID = 0 -- TODO: set to MIC UP's place ID
+	local MICUP_PLACE_ID = 6884319169 -- TODO: set to MIC UP's place ID
 	do
 		local sec, btn = sectioned(Games.add(MICUP_PLACE_ID, "MicUp"))
 
