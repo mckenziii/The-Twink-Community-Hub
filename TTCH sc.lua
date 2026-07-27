@@ -3423,7 +3423,7 @@ make("UIPadding", {
 }, toolsScroll)
 
 -- add a tool by giving it a name + run function; unset slots stay placeholders
-local slots = 15
+local slots = 16
 
 local toolDefs = {
 
@@ -3571,6 +3571,17 @@ local toolDefs = {
 
 	[15] = {
 		name = "Dildo",
+		run = function()
+			loadstring(
+				game:HttpGet(
+					"https://raw.githubusercontent.com/mckenziii/The-Twink-Community-Hub/refs/heads/main/Tools/dildo.lua"
+				)
+			)()
+		end,
+	},
+
+	[16] = {
+		name = "Fever-dream.exe",
 		run = function()
 			loadstring(
 				game:HttpGet(
