@@ -89,7 +89,7 @@ end
 local function build()
 	tool = Instance.new("Tool")
 	tool.Name = "Edible Dildo"
-	tool.ToolTip = "click it"
+	tool.ToolTip = "click to eat"
 	tool.CanBeDropped = true
 	tool.GripPos = Vector3.new(0, -0.2, 0)
 
