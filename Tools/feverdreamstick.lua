@@ -53,7 +53,7 @@ end
 
 -- Swap this if it doesn't resolve in your game -- asset availability varies per experience,
 -- and a dead id here should never stop you eating, hence the pcall down in chomp().
-local BITE_SOUND = "rbxassetid://120043778768093"
+local BITE_SOUND = "rbxassetid://73512886589340"
 
 local COLOUR = Color3.fromRGB(236, 148, 176)
 

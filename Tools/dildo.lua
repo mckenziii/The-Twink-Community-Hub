@@ -51,7 +51,7 @@ local function giveTool(t)
 end
 
 -- Swap this if it doesn't resolve in your game -- asset availability varies per experience.
-local CLICK_SOUND = "rbxassetid://120043778768093"
+local CLICK_SOUND = "rbxassetid://73512886589340"
 
 local COLOUR = Color3.fromRGB(236, 148, 176)
 
