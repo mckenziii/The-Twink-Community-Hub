@@ -6875,6 +6875,12 @@ local function commandLabel(spec)
 	return best
 end
 
+-- Uppercase the first letter, for tidy notification titles/bodies ("walkspeed" -> "Walkspeed")
+local function capitalize(s)
+	s = tostring(s or "")
+	return s == "" and s or (s:sub(1, 1):upper() .. s:sub(2))
+end
+
 -- ---------------- shared window helper ----------------
 -- every popup here is the same shape: titled frame + close X + scrolling rows
 local function listWindow(name, title, rows)
@@ -7354,7 +7360,7 @@ add{
 			return "cframe speed " .. _G.CFrameSpeed
 		end
 		Speed.toggle()
-		return "cframe movement toggled"
+		return "cframe toggled"
 	end,
 }
 add{
@@ -7502,7 +7508,7 @@ add{
 	name = "alias",
 	args = "<command> <name>",
 	group = "Hub",
-	help = "Make your own name for a command. Also: alias list / alias remove <name> / alias clear",
+	help = "Make your own name for a command. Also: alias list / alias remove <name|command> / alias clear",
 	run = function(c)
 		local first, rest = c.arg:match("^(%S*)%s*(.-)$")
 		first = first:lower()
@@ -7523,10 +7529,29 @@ add{
 
 		if first == "remove" or first == "rm" or first == "del" then
 			local target = (rest:match("^(%S+)") or ""):lower()
+			if target == "" then
+				return "usage: alias remove <name|command>"
+			end
+			-- exact alias name -> drop just that one
 			if UserAliases[target] then
 				UserAliases[target] = nil
 				saveAliases()
 				return "removed alias '" .. target .. "'"
+			end
+			-- otherwise treat it as a command and drop every alias under it
+			local spec = CMDS[target]
+			local wantLabel = spec and commandLabel(spec) or target
+			local removed = 0
+			for aliasName, cmdName in pairs(UserAliases) do
+				local label = CMDS[cmdName] and commandLabel(CMDS[cmdName]) or cmdName
+				if label == wantLabel then
+					UserAliases[aliasName] = nil
+					removed = removed + 1
+				end
+			end
+			if removed > 0 then
+				saveAliases()
+				return "removed " .. removed .. " alias" .. (removed == 1 and "" or "es") .. " for '" .. wantLabel .. "'"
 			end
 			return "no alias '" .. target .. "'"
 		end
@@ -7576,7 +7601,7 @@ add{
 			return "needs a number"
 		end
 		Move.setWalkSpeed(c.n)
-		return "walkspeed " .. Move.getWalkSpeed()
+		return "Set walkspeed to " .. Move.getWalkSpeed()
 	end,
 }
 add{
@@ -7590,7 +7615,7 @@ add{
 			return "needs a number"
 		end
 		Move.setJumpPower(c.n)
-		return "jumppower " .. Move.getJumpPower()
+		return "Set jumppower to " .. Move.getJumpPower()
 	end,
 }
 add{
@@ -7712,13 +7737,26 @@ add{
 	help = "Mute a player's VC audio",
 	run = function(c)
 		local t = hubFindPlayer(c.arg)
-		if not t or not t.Character then
+		if not t then
 			return "player not found"
 		end
-		for _, v in ipairs(t.Character:GetDescendants()) do
-			if v:IsA("AudioDeviceInput") then
-				v.Volume = 0
+		-- AudioDeviceInput has no Volume property (setting it throws) - the mute control
+		-- is the Muted bool. The input can sit under the character OR the player object.
+		local n = 0
+		for _, root in ipairs({ t.Character, t }) do
+			if root then
+				for _, v in ipairs(root:GetDescendants()) do
+					if v:IsA("AudioDeviceInput") then
+						pcall(function()
+							v.Muted = true
+						end)
+						n = n + 1
+					end
+				end
 			end
+		end
+		if n == 0 then
+			return t.Name .. " has no VC audio (not in voice?)"
 		end
 		return "muted " .. t.Name
 	end,
@@ -7731,13 +7769,24 @@ add{
 	help = "Unmute a player's VC audio",
 	run = function(c)
 		local t = hubFindPlayer(c.arg)
-		if not t or not t.Character then
+		if not t then
 			return "player not found"
 		end
-		for _, v in ipairs(t.Character:GetDescendants()) do
-			if v:IsA("AudioDeviceInput") then
-				v.Volume = 1
+		local n = 0
+		for _, root in ipairs({ t.Character, t }) do
+			if root then
+				for _, v in ipairs(root:GetDescendants()) do
+					if v:IsA("AudioDeviceInput") then
+						pcall(function()
+							v.Muted = false
+						end)
+						n = n + 1
+					end
+				end
 			end
+		end
+		if n == 0 then
+			return t.Name .. " has no VC audio (not in voice?)"
 		end
 		return "unmuted " .. t.Name
 	end,
@@ -9099,11 +9148,29 @@ hubRunCommand = function(input)
 	end
 	if not spec then
 		say("unknown: " .. name .. " (type help)")
+		if H.notify then
+			H.notify({ title = "Unknown command", text = name .. "  -  type help", kind = "warn", duration = 3 })
+		end
 		return
 	end
-	local msg = spec.run({ arg = arg, n = tonumber(arg), raw = input })
+	-- notifications always name the main command (its descriptive label), so typing a
+	-- built-in OR custom alias still shows e.g. "Walkspeed", never the alias you typed
+	local title = capitalize(commandLabel(spec))
+	-- run under pcall so a throwing command becomes an error toast, not a silent no-op
+	local ok, msg = pcall(spec.run, { arg = arg, n = tonumber(arg), raw = input })
+	if not ok then
+		say("error: " .. tostring(msg))
+		if H.notify then
+			H.notify({ title = title, text = "Error: " .. tostring(msg), kind = "error" })
+		end
+		return
+	end
 	if msg then
 		say(msg)
+	end
+	if H.notify then
+		-- body: the command's own result line, or its help text if it stayed quiet
+		H.notify({ title = title, text = capitalize(msg or spec.help or "Ran"), kind = "success", duration = 3 })
 	end
 end
 
