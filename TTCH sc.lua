@@ -6060,7 +6060,15 @@ Extra.openExecutor = function()
 		return (tostring(p):match("[^/\\]+$")) or tostring(p)
 	end
 	local function parentOf(p)
-		return (tostring(p):gsub("[/\\][^/\\]+$", ""))
+		p = tostring(p)
+		if p:find("[/\\]") then
+			return (p:gsub("[/\\][^/\\]+$", ""))
+		end
+		return "" -- a top-level entry's parent is the workspace root ("")
+	end
+	local function joinPath(dir, name)
+		if dir == nil or dir == "" then return name end
+		return dir .. "/" .. name
 	end
 	local function notify(text, kind, dur)
 		if H.notify then
@@ -6099,20 +6107,37 @@ Extra.openExecutor = function()
 	round(sidebar, 6)
 	make("UIStroke", { Color = COL.stroke, Thickness = 1 }, sidebar)
 
+	-- two editable roots: the dedicated scripts folder and the whole executor workspace
+	local ROOTS = { { name = "scripts", base = SCRIPTS_ROOT }, { name = "workspace", base = "" } }
+	local rootBtns = {}
+	local function makeRootBtn(text, x, idx)
+		local b = make("TextButton", {
+			Size = UDim2.new(0, 76, 0, 22), Position = UDim2.new(0, x, 0, 4),
+			BackgroundColor3 = COL.element, BackgroundTransparency = 0.4,
+			Font = Enum.Font.GothamMedium, TextSize = 11, TextColor3 = COL.sub,
+			Text = text, AutoButtonColor = false, BorderSizePixel = 0,
+		}, sidebar)
+		round(b, 5)
+		rootBtns[idx] = b
+		return b
+	end
+	local scriptsRootBtn = makeRootBtn("scripts", 4, 1)
+	local workspaceRootBtn = makeRootBtn("workspace", 84, 2)
+
 	local pathLabel = make("TextLabel", {
-		Size = UDim2.new(1, -40, 0, 24), Position = UDim2.new(0, 8, 0, 4),
+		Size = UDim2.new(1, -40, 0, 18), Position = UDim2.new(0, 8, 0, 30),
 		BackgroundTransparency = 1, Font = Enum.Font.GothamBold, TextSize = 12,
 		TextColor3 = COL.text, Text = "scripts", TextXAlignment = Enum.TextXAlignment.Left,
 		TextTruncate = Enum.TextTruncate.AtEnd,
 	}, sidebar)
 	local newBtn = make("TextButton", {
-		Size = UDim2.new(0, 24, 0, 20), Position = UDim2.new(1, -30, 0, 6),
+		Size = UDim2.new(0, 24, 0, 20), Position = UDim2.new(1, -30, 0, 29),
 		BackgroundColor3 = COL.element, Font = Enum.Font.GothamBold, TextSize = 15,
 		TextColor3 = COL.text, Text = "+", AutoButtonColor = false, BorderSizePixel = 0,
 	}, sidebar)
 	round(newBtn, 5)
 	local fileList = make("ScrollingFrame", {
-		Size = UDim2.new(1, -8, 1, -34), Position = UDim2.new(0, 4, 0, 30),
+		Size = UDim2.new(1, -8, 1, -56), Position = UDim2.new(0, 4, 0, 52),
 		BackgroundTransparency = 1, BorderSizePixel = 0, ScrollBarThickness = 3,
 		ScrollBarImageColor3 = COL.accent, CanvasSize = UDim2.new(0, 0, 0, 0),
 	}, sidebar)
@@ -6168,12 +6193,13 @@ Extra.openExecutor = function()
 	-- ================= state + forward decls =================
 	local tabsData = {}   -- { { title = , path = , buf = } }
 	local curIdx = 0
+	local curRoot = SCRIPTS_ROOT   -- which root we're browsing ("" = workspace)
 	local curDir = SCRIPTS_ROOT
 	local menuFrame, menuCatcher
 
 	local renderTabs, selectTab, newTab, closeTab
 	local refreshFiles, openFile, showMenu, closeMenu, promptName
-	local createFile, createFolder, deleteEntry, renameEntry
+	local createFile, createFolder, deleteEntry, renameEntry, switchRoot
 
 	local function syncBuf()
 		if curIdx > 0 and tabsData[curIdx] then
@@ -6271,7 +6297,8 @@ Extra.openExecutor = function()
 		for _, ch in ipairs(fileList:GetChildren()) do
 			if ch:IsA("TextButton") then ch:Destroy() end
 		end
-		pathLabel.Text = (curDir == SCRIPTS_ROOT) and "scripts" or baseName(curDir)
+		local rootName = (curRoot == "") and "workspace" or "scripts"
+		pathLabel.Text = (curDir == curRoot) and rootName or baseName(curDir)
 		local y = 0
 		local function addRow(label, icon, onClick, target, isFolder)
 			local row = make("TextButton", {
@@ -6290,7 +6317,7 @@ Extra.openExecutor = function()
 			end)
 			y = y + 24
 		end
-		if curDir ~= SCRIPTS_ROOT then
+		if curDir ~= curRoot then
 			addRow("..", "\u{2B06}\u{FE0F}", function() curDir = parentOf(curDir); refreshFiles() end, nil, false)
 		end
 		if hasFiles then
@@ -6323,14 +6350,14 @@ Extra.openExecutor = function()
 	createFile = function(name)
 		if name == "" then return end
 		if not name:match("%.%w+$") then name = name .. ".lua" end
-		local path = curDir .. "/" .. name
+		local path = joinPath(curDir, name)
 		pcall(function() if writefile then writefile(path, "") end end)
 		refreshFiles()
 		openFile(path)
 	end
 	createFolder = function(name)
 		if name == "" then return end
-		pcall(function() if makefolder then makefolder(curDir .. "/" .. name) end end)
+		pcall(function() if makefolder then makefolder(joinPath(curDir, name)) end end)
 		refreshFiles()
 	end
 	deleteEntry = function(path, isFolder)
@@ -6542,7 +6569,7 @@ Extra.openExecutor = function()
 		promptName("Save as", "script.lua", function(n)
 			if not n or n == "" then return end
 			if not n:match("%.%w+$") then n = n .. ".lua" end
-			local path = curDir .. "/" .. n
+			local path = joinPath(curDir, n)
 			pcall(function() if writefile then writefile(path, editorBox.Text) end end)
 			t.path = path
 			t.title = baseName(path)
@@ -6620,6 +6647,20 @@ Extra.openExecutor = function()
 	connect(editorTab.MouseButton1Click, function() click(); selectPage("editor") end)
 	connect(optionsTab.MouseButton1Click, function() click(); selectPage("options") end)
 
+	-- ================= root switching (scripts <-> workspace) =================
+	switchRoot = function(base)
+		curRoot = base
+		curDir = base
+		for i, b in ipairs(rootBtns) do
+			local active = (ROOTS[i].base == base)
+			b.BackgroundTransparency = active and 0 or 0.4
+			b.TextColor3 = active and COL.text or COL.sub
+		end
+		refreshFiles()
+	end
+	connect(scriptsRootBtn.MouseButton1Click, function() click(); switchRoot(SCRIPTS_ROOT) end)
+	connect(workspaceRootBtn.MouseButton1Click, function() click(); switchRoot("") end)
+
 	connect(f.Destroying, function()
 		if keyCap then keyCap:Disconnect() end
 		closeMenu()
@@ -6628,7 +6669,7 @@ Extra.openExecutor = function()
 	-- ================= boot =================
 	selectPage("editor")
 	newTab("untitled", nil, "")
-	refreshFiles()
+	switchRoot(SCRIPTS_ROOT)
 end
 
 -- ---------------- invisibility window ----------------
