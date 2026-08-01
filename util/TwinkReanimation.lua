@@ -6505,8 +6505,7 @@ local _lastAnimCheck = 0
     local infoFrame = new("Frame",sc,{Size=UDim2.new(1,-10,0,50),BackgroundColor3=C.bg2,BackgroundTransparency=0.6,BorderSizePixel=0})
     corner(infoFrame,8); stroke(infoFrame,C.glassBorder,1,0.6)
     new("TextLabel",infoFrame,{Size=UDim2.new(1,-20,1,0),Position=UDim2.new(0,10,0,0),
-        BackgroundTransparency=1,Text="twinkhub Reanim
-Version: " .. CONFIG.VERSION .. " | Best reanim out",
+        BackgroundTransparency=1,Text="twinkhub Reanim\nVersion: " .. CONFIG.VERSION .. " | Best reanim out",
         TextColor3=C.text3,TextSize=9,Font=Enum.Font.Gotham,TextXAlignment=Enum.TextXAlignment.Center,TextYAlignment=Enum.TextYAlignment.Center})
 
     -- Wire up Import from AK button (merged into settings panel handler)

@@ -6032,6 +6032,605 @@ Extra.openAirwalk = function()
 	end)
 end
 
+-- ---------------- script executor window ----------------
+-- A small in-game Lua IDE styled like the rest of the hub. Uses window() so it gets
+-- the themed frame + the standard red/yellow close/minimize pills (literal colours,
+-- NOT COL roles, so the theme never recolours them). Everything else uses COL, so it
+-- follows the active theme. Features: multiple script tabs, a file explorer sidebar
+-- rooted at workspace/twinkhub/scripts with a right-click menu (new file/folder,
+-- rename, delete), and an open-key rebind on the Options tab.
+local SCRIPTS_ROOT = "twinkhub/scripts"
+Extra.openExecutor = function()
+	local f, body = window("ExecutorUI", "Executor", 660, 460)
+	if not f then
+		return
+	end
+
+	-- make sure the scripts folder exists (best-effort; some executors lack a file API)
+	pcall(function()
+		if makefolder then
+			if isfolder and not isfolder("twinkhub") then makefolder("twinkhub") end
+			if isfolder and not isfolder(SCRIPTS_ROOT) then makefolder(SCRIPTS_ROOT) end
+		end
+	end)
+	local hasFiles = (listfiles and readfile and writefile) and true or false
+
+	-- ---- helpers ----
+	local function baseName(p)
+		return (tostring(p):match("[^/\\]+$")) or tostring(p)
+	end
+	local function parentOf(p)
+		return (tostring(p):gsub("[/\\][^/\\]+$", ""))
+	end
+	local function notify(text, kind, dur)
+		if H.notify then
+			H.notify({ title = "Executor", text = text, kind = kind, duration = dur or 3 })
+		end
+	end
+
+	-- ================= top Editor / Options tabs =================
+	local function topTab(text, x)
+		local b = make("TextButton", {
+			Size = UDim2.new(0, 84, 0, 26), Position = UDim2.new(0, x, 0, 0),
+			BackgroundColor3 = COL.element, BackgroundTransparency = 1,
+			Font = Enum.Font.GothamMedium, TextSize = 13, TextColor3 = COL.sub,
+			Text = text, AutoButtonColor = false, BorderSizePixel = 0,
+		}, body)
+		round(b, 6)
+		return b
+	end
+	local editorTab = topTab("Editor", 0)
+	local optionsTab = topTab("Options", 88)
+
+	local editorPage = make("Frame", {
+		Size = UDim2.new(1, 0, 1, -34), Position = UDim2.new(0, 0, 0, 34),
+		BackgroundTransparency = 1, BorderSizePixel = 0,
+	}, body)
+	local optionsPage = make("Frame", {
+		Size = UDim2.new(1, 0, 1, -34), Position = UDim2.new(0, 0, 0, 34),
+		BackgroundTransparency = 1, BorderSizePixel = 0, Visible = false,
+	}, body)
+
+	-- ================= sidebar (file explorer) =================
+	local sidebar = make("Frame", {
+		Size = UDim2.new(0, 168, 1, 0), Position = UDim2.new(0, 0, 0, 0),
+		BackgroundColor3 = COL.element, BackgroundTransparency = 0.35, BorderSizePixel = 0,
+	}, editorPage)
+	round(sidebar, 6)
+	make("UIStroke", { Color = COL.stroke, Thickness = 1 }, sidebar)
+
+	local pathLabel = make("TextLabel", {
+		Size = UDim2.new(1, -40, 0, 24), Position = UDim2.new(0, 8, 0, 4),
+		BackgroundTransparency = 1, Font = Enum.Font.GothamBold, TextSize = 12,
+		TextColor3 = COL.text, Text = "scripts", TextXAlignment = Enum.TextXAlignment.Left,
+		TextTruncate = Enum.TextTruncate.AtEnd,
+	}, sidebar)
+	local newBtn = make("TextButton", {
+		Size = UDim2.new(0, 24, 0, 20), Position = UDim2.new(1, -30, 0, 6),
+		BackgroundColor3 = COL.element, Font = Enum.Font.GothamBold, TextSize = 15,
+		TextColor3 = COL.text, Text = "+", AutoButtonColor = false, BorderSizePixel = 0,
+	}, sidebar)
+	round(newBtn, 5)
+	local fileList = make("ScrollingFrame", {
+		Size = UDim2.new(1, -8, 1, -34), Position = UDim2.new(0, 4, 0, 30),
+		BackgroundTransparency = 1, BorderSizePixel = 0, ScrollBarThickness = 3,
+		ScrollBarImageColor3 = COL.accent, CanvasSize = UDim2.new(0, 0, 0, 0),
+	}, sidebar)
+
+	-- ================= main area (tabs + editor) =================
+	local mainArea = make("Frame", {
+		Size = UDim2.new(1, -176, 1, 0), Position = UDim2.new(0, 176, 0, 0),
+		BackgroundTransparency = 1, BorderSizePixel = 0,
+	}, editorPage)
+
+	local scriptTabBar = make("ScrollingFrame", {
+		Size = UDim2.new(1, 0, 0, 26), Position = UDim2.new(0, 0, 0, 0),
+		BackgroundTransparency = 1, BorderSizePixel = 0,
+		ScrollBarThickness = 0, ScrollingDirection = Enum.ScrollingDirection.X,
+		CanvasSize = UDim2.new(0, 0, 0, 0),
+	}, mainArea)
+
+	local editorBox = make("TextBox", {
+		Size = UDim2.new(1, 0, 1, -66), Position = UDim2.new(0, 0, 0, 30),
+		BackgroundColor3 = COL.element, Font = Enum.Font.Code, TextSize = 14,
+		TextColor3 = COL.text, Text = "", PlaceholderText = "-- write your lua here",
+		PlaceholderColor3 = COL.sub, MultiLine = true, ClearTextOnFocus = false,
+		TextXAlignment = Enum.TextXAlignment.Left, TextYAlignment = Enum.TextYAlignment.Top,
+		TextWrapped = false, BorderSizePixel = 0,
+	}, mainArea)
+	round(editorBox, 6)
+	make("UIStroke", { Color = COL.stroke, Thickness = 1 }, editorBox)
+	make("UIPadding", {
+		PaddingTop = UDim.new(0, 8), PaddingBottom = UDim.new(0, 8),
+		PaddingLeft = UDim.new(0, 8), PaddingRight = UDim.new(0, 8),
+	}, editorBox)
+
+	local runBtn = make("TextButton", {
+		Size = UDim2.new(0, 120, 0, 30), Position = UDim2.new(0, 0, 1, -32),
+		BackgroundColor3 = COL.accent, Font = Enum.Font.GothamBold, TextSize = 13,
+		TextColor3 = Color3.new(1, 1, 1), Text = "Run script", AutoButtonColor = false,
+		BorderSizePixel = 0,
+	}, mainArea)
+	round(runBtn, 6)
+	local clearBtn = make("TextButton", {
+		Size = UDim2.new(0, 84, 0, 30), Position = UDim2.new(0, 128, 1, -32),
+		BackgroundColor3 = COL.element, Font = Enum.Font.GothamMedium, TextSize = 13,
+		TextColor3 = COL.text, Text = "Clear", AutoButtonColor = false, BorderSizePixel = 0,
+	}, mainArea)
+	round(clearBtn, 6)
+	local saveBtn = make("TextButton", {
+		Size = UDim2.new(0, 84, 0, 30), Position = UDim2.new(0, 220, 1, -32),
+		BackgroundColor3 = COL.element, Font = Enum.Font.GothamMedium, TextSize = 13,
+		TextColor3 = COL.text, Text = "Save", AutoButtonColor = false, BorderSizePixel = 0,
+	}, mainArea)
+	round(saveBtn, 6)
+
+	-- ================= state + forward decls =================
+	local tabsData = {}   -- { { title = , path = , buf = } }
+	local curIdx = 0
+	local curDir = SCRIPTS_ROOT
+	local menuFrame, menuCatcher
+
+	local renderTabs, selectTab, newTab, closeTab
+	local refreshFiles, openFile, showMenu, closeMenu, promptName
+	local createFile, createFolder, deleteEntry, renameEntry
+
+	local function syncBuf()
+		if curIdx > 0 and tabsData[curIdx] then
+			tabsData[curIdx].buf = editorBox.Text
+		end
+	end
+
+	-- ================= script tabs =================
+	renderTabs = function()
+		for _, ch in ipairs(scriptTabBar:GetChildren()) do
+			if ch:IsA("TextButton") then ch:Destroy() end
+		end
+		local x = 0
+		for i, t in ipairs(tabsData) do
+			local active = (i == curIdx)
+			local tb = make("TextButton", {
+				Size = UDim2.new(0, 104, 1, -4), Position = UDim2.new(0, x, 0, 2),
+				BackgroundColor3 = active and COL.element or COL.bg,
+				BackgroundTransparency = active and 0 or 0.4,
+				Font = Enum.Font.Gotham, TextSize = 12,
+				TextColor3 = active and COL.text or COL.sub,
+				Text = "  " .. t.title, TextXAlignment = Enum.TextXAlignment.Left,
+				TextTruncate = Enum.TextTruncate.AtEnd, AutoButtonColor = false, BorderSizePixel = 0,
+			}, scriptTabBar)
+			round(tb, 5)
+			connect(tb.MouseButton1Click, function() click(); selectTab(i) end)
+			local xb = make("TextButton", {
+				Size = UDim2.new(0, 16, 0, 16), Position = UDim2.new(1, -18, 0.5, -8),
+				BackgroundTransparency = 1, Font = Enum.Font.GothamBold, TextSize = 12,
+				TextColor3 = COL.sub, Text = "x", ZIndex = 3, AutoButtonColor = false,
+			}, tb)
+			connect(xb.MouseButton1Click, function() click(); closeTab(i) end)
+			x = x + 108
+		end
+		local addb = make("TextButton", {
+			Size = UDim2.new(0, 26, 1, -4), Position = UDim2.new(0, x, 0, 2),
+			BackgroundColor3 = COL.element, BackgroundTransparency = 0.3,
+			Font = Enum.Font.GothamBold, TextSize = 16, TextColor3 = COL.text,
+			Text = "+", AutoButtonColor = false, BorderSizePixel = 0,
+		}, scriptTabBar)
+		round(addb, 5)
+		connect(addb.MouseButton1Click, function() click(); newTab("untitled", nil, "") end)
+		scriptTabBar.CanvasSize = UDim2.new(0, x + 30, 0, 0)
+	end
+
+	selectTab = function(i)
+		syncBuf()
+		curIdx = i
+		editorBox.Text = tabsData[i] and tabsData[i].buf or ""
+		renderTabs()
+	end
+	newTab = function(title, path, content)
+		syncBuf()
+		tabsData[#tabsData + 1] = { title = title or "untitled", path = path, buf = content or "" }
+		curIdx = #tabsData
+		editorBox.Text = content or ""
+		renderTabs()
+	end
+	closeTab = function(i)
+		table.remove(tabsData, i)
+		if #tabsData == 0 then
+			tabsData[1] = { title = "untitled", path = nil, buf = "" }
+			curIdx = 1
+		elseif curIdx >= i then
+			curIdx = math.max(1, curIdx - 1)
+		end
+		editorBox.Text = tabsData[curIdx].buf
+		renderTabs()
+	end
+
+	openFile = function(path)
+		for i, t in ipairs(tabsData) do
+			if t.path == path then selectTab(i); return end
+		end
+		local content = ""
+		pcall(function()
+			if readfile then content = readfile(path) or "" end
+		end)
+		newTab(baseName(path), path, content)
+	end
+
+	-- persist the active tab to its file (if it's a real file) on focus loss
+	connect(editorBox.FocusLost, function()
+		syncBuf()
+		local t = tabsData[curIdx]
+		if t and t.path then
+			pcall(function()
+				if writefile then writefile(t.path, editorBox.Text) end
+			end)
+		end
+	end)
+
+	-- ================= file explorer =================
+	refreshFiles = function()
+		for _, ch in ipairs(fileList:GetChildren()) do
+			if ch:IsA("TextButton") then ch:Destroy() end
+		end
+		pathLabel.Text = (curDir == SCRIPTS_ROOT) and "scripts" or baseName(curDir)
+		local y = 0
+		local function addRow(label, icon, onClick, target, isFolder)
+			local row = make("TextButton", {
+				Size = UDim2.new(1, -4, 0, 22), Position = UDim2.new(0, 2, 0, y),
+				BackgroundColor3 = COL.bg, BackgroundTransparency = 0.25,
+				Font = Enum.Font.Gotham, TextSize = 12, TextColor3 = COL.text,
+				Text = " " .. icon .. "  " .. label, TextXAlignment = Enum.TextXAlignment.Left,
+				TextTruncate = Enum.TextTruncate.AtEnd, AutoButtonColor = false, BorderSizePixel = 0,
+			}, fileList)
+			round(row, 4)
+			H.animate(row)
+			connect(row.MouseButton1Click, function() click(); onClick() end)
+			connect(row.MouseButton2Click, function()
+				local m = UIS:GetMouseLocation()
+				showMenu(m.X, m.Y, target, isFolder)
+			end)
+			y = y + 24
+		end
+		if curDir ~= SCRIPTS_ROOT then
+			addRow("..", "\u{2B06}\u{FE0F}", function() curDir = parentOf(curDir); refreshFiles() end, nil, false)
+		end
+		if hasFiles then
+			local ok, entries = pcall(listfiles, curDir)
+			local shown = 0
+			if ok and type(entries) == "table" then
+				local folders, files = {}, {}
+				for _, p in ipairs(entries) do
+					if isfolder and isfolder(p) then folders[#folders + 1] = p else files[#files + 1] = p end
+				end
+				for _, p in ipairs(folders) do
+					addRow(baseName(p), "\u{1F4C1}", function() curDir = p; refreshFiles() end, p, true)
+					shown = shown + 1
+				end
+				for _, p in ipairs(files) do
+					addRow(baseName(p), "\u{1F4C4}", function() openFile(p) end, p, false)
+					shown = shown + 1
+				end
+			end
+			if shown == 0 then
+				addRow("(empty - right-click to add)", "\u{2795}", function() end, nil, false)
+			end
+		else
+			addRow("no file API", "\u{26A0}\u{FE0F}", function() end, nil, false)
+		end
+		fileList.CanvasSize = UDim2.new(0, 0, 0, y + 4)
+	end
+
+	-- ================= file operations =================
+	createFile = function(name)
+		if name == "" then return end
+		if not name:match("%.%w+$") then name = name .. ".lua" end
+		local path = curDir .. "/" .. name
+		pcall(function() if writefile then writefile(path, "") end end)
+		refreshFiles()
+		openFile(path)
+	end
+	createFolder = function(name)
+		if name == "" then return end
+		pcall(function() if makefolder then makefolder(curDir .. "/" .. name) end end)
+		refreshFiles()
+	end
+	deleteEntry = function(path, isFolder)
+		pcall(function()
+			if isFolder then
+				if delfolder then delfolder(path) end
+			else
+				if delfile then delfile(path) end
+			end
+		end)
+		-- close any tab that pointed at the deleted file
+		for i = #tabsData, 1, -1 do
+			if tabsData[i].path == path then closeTab(i) end
+		end
+		refreshFiles()
+		notify(baseName(path) .. " deleted", "success", 2)
+	end
+	renameEntry = function(path, newName)
+		if newName == "" then return end
+		local newPath = (path:gsub("[^/\\]+$", newName))
+		pcall(function()
+			if readfile and writefile then
+				local c = readfile(path) or ""
+				writefile(newPath, c)
+				if delfile then delfile(path) end
+			end
+		end)
+		for _, t in ipairs(tabsData) do
+			if t.path == path then t.path = newPath; t.title = baseName(newPath) end
+		end
+		refreshFiles()
+		renderTabs()
+	end
+
+	-- ================= name prompt overlay =================
+	promptName = function(titleText, default, cb)
+		local overlay = make("Frame", {
+			Name = "Prompt", Size = UDim2.new(1, 0, 1, 0), Position = UDim2.new(0, 0, 0, 0),
+			BackgroundColor3 = Color3.new(0, 0, 0), BackgroundTransparency = 0.5,
+			BorderSizePixel = 0, ZIndex = 50,
+		}, f)
+		local boxf = make("Frame", {
+			Size = UDim2.new(0, 300, 0, 128), Position = UDim2.new(0.5, -150, 0.5, -64),
+			BackgroundColor3 = COL.bg, BorderSizePixel = 0, ZIndex = 51,
+		}, overlay)
+		round(boxf, 8)
+		make("UIStroke", { Color = COL.stroke, Thickness = 1 }, boxf)
+		make("TextLabel", {
+			Size = UDim2.new(1, -20, 0, 24), Position = UDim2.new(0, 12, 0, 10),
+			BackgroundTransparency = 1, Font = Enum.Font.GothamBold, TextSize = 13,
+			TextColor3 = COL.text, Text = titleText, TextXAlignment = Enum.TextXAlignment.Left,
+			ZIndex = 52,
+		}, boxf)
+		local input = make("TextBox", {
+			Size = UDim2.new(1, -24, 0, 30), Position = UDim2.new(0, 12, 0, 42),
+			BackgroundColor3 = COL.element, Font = Enum.Font.Gotham, TextSize = 13,
+			TextColor3 = COL.text, Text = default or "", ClearTextOnFocus = false,
+			BorderSizePixel = 0, ZIndex = 52,
+		}, boxf)
+		round(input, 6)
+		local okB = make("TextButton", {
+			Size = UDim2.new(0, 80, 0, 28), Position = UDim2.new(1, -92, 1, -38),
+			BackgroundColor3 = COL.accent, Font = Enum.Font.GothamBold, TextSize = 13,
+			TextColor3 = Color3.new(1, 1, 1), Text = "OK", AutoButtonColor = false,
+			BorderSizePixel = 0, ZIndex = 52,
+		}, boxf)
+		round(okB, 6)
+		H.animate(okB)
+		local caB = make("TextButton", {
+			Size = UDim2.new(0, 80, 0, 28), Position = UDim2.new(1, -178, 1, -38),
+			BackgroundColor3 = COL.element, Font = Enum.Font.GothamMedium, TextSize = 13,
+			TextColor3 = COL.text, Text = "Cancel", AutoButtonColor = false,
+			BorderSizePixel = 0, ZIndex = 52,
+		}, boxf)
+		round(caB, 6)
+		H.animate(caB)
+		local done = false
+		local function finish(val)
+			if done then return end
+			done = true
+			overlay:Destroy()
+			if cb then cb(val) end
+		end
+		connect(okB.MouseButton1Click, function() click(); finish(input.Text) end)
+		connect(caB.MouseButton1Click, function() click(); finish(nil) end)
+		connect(input.FocusLost, function(enter) if enter then finish(input.Text) end end)
+		task.defer(function() pcall(function() input:CaptureFocus() end) end)
+	end
+
+	-- ================= right-click context menu =================
+	closeMenu = function()
+		if menuFrame then menuFrame:Destroy(); menuFrame = nil end
+		if menuCatcher then menuCatcher:Destroy(); menuCatcher = nil end
+	end
+	showMenu = function(mx, my, target, isFolder)
+		closeMenu()
+		local items = {}
+		items[#items + 1] = { "New file", function()
+			promptName("New file name", "script.lua", function(n) if n then createFile(n) end end)
+		end }
+		items[#items + 1] = { "New folder", function()
+			promptName("New folder name", "folder", function(n) if n then createFolder(n) end end)
+		end }
+		if target and not isFolder then
+			items[#items + 1] = { "Rename", function()
+				promptName("Rename", baseName(target), function(n) if n then renameEntry(target, n) end end)
+			end }
+		end
+		if target then
+			items[#items + 1] = { "Delete", function() deleteEntry(target, isFolder) end }
+		end
+		items[#items + 1] = { "Refresh", function() refreshFiles() end }
+
+		menuCatcher = make("Frame", {
+			Name = "MenuCatcher", Size = UDim2.new(1, 0, 1, 0), Position = UDim2.new(0, 0, 0, 0),
+			BackgroundTransparency = 1, BorderSizePixel = 0, ZIndex = 58, Active = true,
+		}, f)
+		local catchBtn = make("TextButton", {
+			Size = UDim2.new(1, 0, 1, 0), BackgroundTransparency = 1, Text = "", ZIndex = 58,
+		}, menuCatcher)
+		connect(catchBtn.MouseButton1Click, closeMenu)
+
+		local h = #items * 24 + 8
+		menuFrame = make("Frame", {
+			Name = "Menu", Size = UDim2.new(0, 148, 0, h),
+			Position = UDim2.new(0, mx - f.AbsolutePosition.X, 0, my - f.AbsolutePosition.Y),
+			BackgroundColor3 = COL.bg, BorderSizePixel = 0, ZIndex = 60,
+		}, f)
+		round(menuFrame, 6)
+		make("UIStroke", { Color = COL.stroke, Thickness = 1 }, menuFrame)
+		for i, it in ipairs(items) do
+			local mb = make("TextButton", {
+				Size = UDim2.new(1, -8, 0, 22), Position = UDim2.new(0, 4, 0, 4 + (i - 1) * 24),
+				BackgroundColor3 = COL.element, BackgroundTransparency = 1,
+				Font = Enum.Font.Gotham, TextSize = 12, TextColor3 = COL.text,
+				Text = "  " .. it[1], TextXAlignment = Enum.TextXAlignment.Left,
+				AutoButtonColor = false, BorderSizePixel = 0, ZIndex = 61,
+			}, menuFrame)
+			round(mb, 4)
+			connect(mb.MouseEnter, function() mb.BackgroundTransparency = 0 end)
+			connect(mb.MouseLeave, function() mb.BackgroundTransparency = 1 end)
+			connect(mb.MouseButton1Click, function()
+				click()
+				closeMenu()
+				it[2]()
+			end)
+		end
+	end
+
+	connect(newBtn.MouseButton1Click, function()
+		local p = newBtn.AbsolutePosition
+		click()
+		showMenu(p.X, p.Y + 22, nil, false)
+	end)
+
+	-- ================= run / clear =================
+	local clearAfterRun = false
+	local function doRun()
+		click()
+		syncBuf()
+		local src = editorBox.Text
+		if (src:gsub("%s", "")) == "" then
+			notify("Nothing to run", "warn", 2)
+			return
+		end
+		local t = tabsData[curIdx]
+		if t and t.path then
+			pcall(function() if writefile then writefile(t.path, src) end end)
+		end
+		if not loadstring then
+			notify("This executor has no loadstring", "error", 5)
+			return
+		end
+		local fn, cerr = loadstring(src)
+		if not fn then
+			notify("Compile error: " .. tostring(cerr), "error", 6)
+			return
+		end
+		local ok, rerr = pcall(fn)
+		if not ok then
+			notify("Runtime error: " .. tostring(rerr), "error", 6)
+			return
+		end
+		notify("Script ran", "success", 2)
+		if clearAfterRun then
+			editorBox.Text = ""
+			syncBuf()
+		end
+	end
+	connect(runBtn.MouseButton1Click, doRun)
+	connect(clearBtn.MouseButton1Click, function()
+		click()
+		editorBox.Text = ""
+		syncBuf()
+	end)
+
+	-- save the active tab. If it's already a file, overwrite; otherwise ask for a
+	-- name and drop it in the current folder, then show it in the sidebar.
+	local function doSave()
+		click()
+		syncBuf()
+		local t = tabsData[curIdx]
+		if not t then return end
+		if t.path then
+			pcall(function() if writefile then writefile(t.path, editorBox.Text) end end)
+			notify(baseName(t.path) .. " saved", "success", 2)
+			return
+		end
+		promptName("Save as", "script.lua", function(n)
+			if not n or n == "" then return end
+			if not n:match("%.%w+$") then n = n .. ".lua" end
+			local path = curDir .. "/" .. n
+			pcall(function() if writefile then writefile(path, editorBox.Text) end end)
+			t.path = path
+			t.title = baseName(path)
+			renderTabs()
+			refreshFiles()
+			notify(n .. " saved", "success", 2)
+		end)
+	end
+	connect(saveBtn.MouseButton1Click, doSave)
+
+	-- ================= options page =================
+	local function optRow(label, y, initial, onChanged)
+		make("TextLabel", {
+			Size = UDim2.new(1, -56, 0, 22), Position = UDim2.new(0, 0, 0, y),
+			BackgroundTransparency = 1, Font = Enum.Font.GothamMedium, TextSize = 13,
+			TextColor3 = COL.text, Text = label, TextXAlignment = Enum.TextXAlignment.Left,
+		}, optionsPage)
+		makeSwitch(optionsPage, y, initial, onChanged)
+	end
+
+	-- open-executor keybind (routes through the hub's bind system, like fly/airwalk)
+	make("TextLabel", {
+		Size = UDim2.new(1, -140, 0, 22), Position = UDim2.new(0, 0, 0, 0),
+		BackgroundTransparency = 1, Font = Enum.Font.GothamMedium, TextSize = 13,
+		TextColor3 = COL.text, Text = "Open / close key", TextXAlignment = Enum.TextXAlignment.Left,
+	}, optionsPage)
+	local keyBtn = make("TextButton", {
+		Size = UDim2.new(0, 130, 0, 26), Position = UDim2.new(1, -130, 0, 0),
+		BackgroundColor3 = COL.element, Font = Enum.Font.GothamMedium, TextSize = 12,
+		TextColor3 = COL.accent, Text = "Key: " .. H.keyFor("executor"),
+		AutoButtonColor = false, BorderSizePixel = 0,
+	}, optionsPage)
+	round(keyBtn, 6)
+	local waitingKey, keyCap = false, nil
+	connect(keyBtn.MouseButton1Click, function()
+		click()
+		if waitingKey then return end
+		waitingKey = true
+		keyBtn.Text = "press a key..."
+		keyCap = UIS.InputBegan:Connect(function(inp, gp)
+			if gp then return end
+			if inp.UserInputType == Enum.UserInputType.Keyboard then
+				H.setBind("executor", inp.KeyCode.Name)
+				H.keyChangeCooldown = true
+				task.delay(0.3, function() H.keyChangeCooldown = false end)
+				waitingKey = false
+				keyBtn.Text = "Key: " .. H.keyFor("executor")
+				if keyCap then keyCap:Disconnect(); keyCap = nil end
+			end
+		end)
+	end)
+
+	optRow("Clear editor after running", 34, false, function(on) clearAfterRun = on end)
+	optRow("Word wrap", 68, false, function(on) editorBox.TextWrapped = on end)
+	make("TextLabel", {
+		Size = UDim2.new(1, 0, 0, 40), Position = UDim2.new(0, 0, 1, -40),
+		BackgroundTransparency = 1, Font = Enum.Font.Gotham, TextSize = 11,
+		TextColor3 = COL.sub,
+		Text = "twinkhub executor  -  files live in workspace/twinkhub/scripts",
+		TextXAlignment = Enum.TextXAlignment.Left, TextYAlignment = Enum.TextYAlignment.Bottom,
+		TextWrapped = true,
+	}, optionsPage)
+
+	-- ================= top-tab switching =================
+	local function selectPage(which)
+		local onEditor = which == "editor"
+		editorPage.Visible = onEditor
+		optionsPage.Visible = not onEditor
+		editorTab.BackgroundTransparency = onEditor and 0 or 1
+		editorTab.TextColor3 = onEditor and COL.text or COL.sub
+		optionsTab.BackgroundTransparency = onEditor and 1 or 0
+		optionsTab.TextColor3 = onEditor and COL.sub or COL.text
+		closeMenu()
+	end
+	connect(editorTab.MouseButton1Click, function() click(); selectPage("editor") end)
+	connect(optionsTab.MouseButton1Click, function() click(); selectPage("options") end)
+
+	connect(f.Destroying, function()
+		if keyCap then keyCap:Disconnect() end
+		closeMenu()
+	end)
+
+	-- ================= boot =================
+	selectPage("editor")
+	newTab("untitled", nil, "")
+	refreshFiles()
+end
+
 -- ---------------- invisibility window ----------------
 Extra.openInvis = function()
 	local f, body = window("InvisUI", "Invisible", 250, 120)
@@ -8414,6 +9013,16 @@ add{
 	end,
 }
 add{
+	name = "executor",
+	alias = { "exec" },
+	group = "Tools",
+	help = "Open the in-game Lua script executor",
+	bindable = true,
+	run = function()
+		Extra.openExecutor()
+	end,
+}
+add{
 	name = "platform",
 	alias = { "hover" },
 	group = "Movement",
@@ -8986,7 +9595,7 @@ if isAdmin then
 		end,
 	}
 	add{
-		name = "executor",
+		name = "executorname",
 		group = "Debug",
 		debug = true,
 		help = "Show the executor name",
