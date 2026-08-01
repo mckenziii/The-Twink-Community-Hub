@@ -6107,37 +6107,23 @@ Extra.openExecutor = function()
 	round(sidebar, 6)
 	make("UIStroke", { Color = COL.stroke, Thickness = 1 }, sidebar)
 
-	-- two editable roots: the dedicated scripts folder and the whole executor workspace
-	local ROOTS = { { name = "scripts", base = SCRIPTS_ROOT }, { name = "workspace", base = "" } }
-	local rootBtns = {}
-	local function makeRootBtn(text, x, idx)
-		local b = make("TextButton", {
-			Size = UDim2.new(0, 76, 0, 22), Position = UDim2.new(0, x, 0, 4),
-			BackgroundColor3 = COL.element, BackgroundTransparency = 0.4,
-			Font = Enum.Font.GothamMedium, TextSize = 11, TextColor3 = COL.sub,
-			Text = text, AutoButtonColor = false, BorderSizePixel = 0,
-		}, sidebar)
-		round(b, 5)
-		rootBtns[idx] = b
-		return b
-	end
-	local scriptsRootBtn = makeRootBtn("scripts", 4, 1)
-	local workspaceRootBtn = makeRootBtn("workspace", 84, 2)
+	-- two editable roots shown as a nested tree: the dedicated scripts folder and
+	-- the whole executor workspace ("" = the executor's file-system root)
+	local ROOTS = { { name = "scripts", base = SCRIPTS_ROOT }, { name = "Workspace", base = "" } }
 
-	local pathLabel = make("TextLabel", {
-		Size = UDim2.new(1, -40, 0, 18), Position = UDim2.new(0, 8, 0, 30),
+	make("TextLabel", {
+		Size = UDim2.new(1, -40, 0, 20), Position = UDim2.new(0, 8, 0, 5),
 		BackgroundTransparency = 1, Font = Enum.Font.GothamBold, TextSize = 12,
-		TextColor3 = COL.text, Text = "scripts", TextXAlignment = Enum.TextXAlignment.Left,
-		TextTruncate = Enum.TextTruncate.AtEnd,
+		TextColor3 = COL.text, Text = "Explorer", TextXAlignment = Enum.TextXAlignment.Left,
 	}, sidebar)
 	local newBtn = make("TextButton", {
-		Size = UDim2.new(0, 24, 0, 20), Position = UDim2.new(1, -30, 0, 29),
+		Size = UDim2.new(0, 24, 0, 20), Position = UDim2.new(1, -30, 0, 5),
 		BackgroundColor3 = COL.element, Font = Enum.Font.GothamBold, TextSize = 15,
 		TextColor3 = COL.text, Text = "+", AutoButtonColor = false, BorderSizePixel = 0,
 	}, sidebar)
 	round(newBtn, 5)
 	local fileList = make("ScrollingFrame", {
-		Size = UDim2.new(1, -8, 1, -56), Position = UDim2.new(0, 4, 0, 52),
+		Size = UDim2.new(1, -8, 1, -34), Position = UDim2.new(0, 4, 0, 30),
 		BackgroundTransparency = 1, BorderSizePixel = 0, ScrollBarThickness = 3,
 		ScrollBarImageColor3 = COL.accent, CanvasSize = UDim2.new(0, 0, 0, 0),
 	}, sidebar)
@@ -6193,13 +6179,12 @@ Extra.openExecutor = function()
 	-- ================= state + forward decls =================
 	local tabsData = {}   -- { { title = , path = , buf = } }
 	local curIdx = 0
-	local curRoot = SCRIPTS_ROOT   -- which root we're browsing ("" = workspace)
-	local curDir = SCRIPTS_ROOT
+	local expanded = {}   -- [folderPath] = true when that node is expanded in the tree
 	local menuFrame, menuCatcher
 
 	local renderTabs, selectTab, newTab, closeTab
 	local refreshFiles, openFile, showMenu, closeMenu, promptName
-	local createFile, createFolder, deleteEntry, renameEntry, switchRoot
+	local createFile, createFolder, deleteEntry, renameEntry
 
 	local function syncBuf()
 		if curIdx > 0 and tabsData[curIdx] then
@@ -6292,72 +6277,81 @@ Extra.openExecutor = function()
 		end
 	end)
 
-	-- ================= file explorer =================
+	-- ================= file explorer (nested tree) =================
 	refreshFiles = function()
 		for _, ch in ipairs(fileList:GetChildren()) do
 			if ch:IsA("TextButton") then ch:Destroy() end
 		end
-		local rootName = (curRoot == "") and "workspace" or "scripts"
-		pathLabel.Text = (curDir == curRoot) and rootName or baseName(curDir)
 		local y = 0
-		local function addRow(label, icon, onClick, target, isFolder)
+		-- depth indents the row; onLeft handles click, target/isFolder feed the menu
+		local function addRow(label, icon, depth, bold, onLeft, target, isFolder)
 			local row = make("TextButton", {
 				Size = UDim2.new(1, -4, 0, 22), Position = UDim2.new(0, 2, 0, y),
-				BackgroundColor3 = COL.bg, BackgroundTransparency = 0.25,
-				Font = Enum.Font.Gotham, TextSize = 12, TextColor3 = COL.text,
-				Text = " " .. icon .. "  " .. label, TextXAlignment = Enum.TextXAlignment.Left,
+				BackgroundColor3 = COL.bg, BackgroundTransparency = bold and 0.1 or 0.25,
+				Font = bold and Enum.Font.GothamBold or Enum.Font.Gotham, TextSize = 12,
+				TextColor3 = bold and COL.text or COL.sub,
+				Text = icon .. "  " .. label, TextXAlignment = Enum.TextXAlignment.Left,
 				TextTruncate = Enum.TextTruncate.AtEnd, AutoButtonColor = false, BorderSizePixel = 0,
 			}, fileList)
 			round(row, 4)
+			make("UIPadding", { PaddingLeft = UDim.new(0, 6 + depth * 13) }, row)
 			H.animate(row)
-			connect(row.MouseButton1Click, function() click(); onClick() end)
+			connect(row.MouseButton1Click, function() click(); if onLeft then onLeft() end end)
 			connect(row.MouseButton2Click, function()
 				local m = UIS:GetMouseLocation()
 				showMenu(m.X, m.Y, target, isFolder)
 			end)
 			y = y + 24
 		end
-		if curDir ~= curRoot then
-			addRow("..", "\u{2B06}\u{FE0F}", function() curDir = parentOf(curDir); refreshFiles() end, nil, false)
+		-- render one directory's children (folders first), recursing into open folders
+		local renderDir
+		renderDir = function(dir, depth)
+			if not hasFiles then return end
+			local ok, entries = pcall(listfiles, dir)
+			if not ok or type(entries) ~= "table" then return end
+			local folders, files = {}, {}
+			for _, p in ipairs(entries) do
+				if isfolder and isfolder(p) then folders[#folders + 1] = p else files[#files + 1] = p end
+			end
+			table.sort(folders)
+			table.sort(files)
+			for _, p in ipairs(folders) do
+				local isOpen = expanded[p] == true
+				addRow(baseName(p), isOpen and "\u{1F4C2}" or "\u{1F4C1}", depth, false,
+					function() expanded[p] = not isOpen; refreshFiles() end, p, true)
+				if isOpen then renderDir(p, depth + 1) end
+			end
+			for _, p in ipairs(files) do
+				addRow(baseName(p), "\u{1F4C4}", depth, false, function() openFile(p) end, p, false)
+			end
 		end
-		if hasFiles then
-			local ok, entries = pcall(listfiles, curDir)
-			local shown = 0
-			if ok and type(entries) == "table" then
-				local folders, files = {}, {}
-				for _, p in ipairs(entries) do
-					if isfolder and isfolder(p) then folders[#folders + 1] = p else files[#files + 1] = p end
-				end
-				for _, p in ipairs(folders) do
-					addRow(baseName(p), "\u{1F4C1}", function() curDir = p; refreshFiles() end, p, true)
-					shown = shown + 1
-				end
-				for _, p in ipairs(files) do
-					addRow(baseName(p), "\u{1F4C4}", function() openFile(p) end, p, false)
-					shown = shown + 1
-				end
-			end
-			if shown == 0 then
-				addRow("(empty - right-click to add)", "\u{2795}", function() end, nil, false)
-			end
-		else
-			addRow("no file API", "\u{26A0}\u{FE0F}", function() end, nil, false)
+		-- each root is a bold header; roots start expanded
+		for _, root in ipairs(ROOTS) do
+			local isOpen = expanded[root.base] ~= false
+			addRow(root.name, isOpen and "\u{1F4C2}" or "\u{1F4C1}", 0, true,
+				function() expanded[root.base] = not isOpen; refreshFiles() end, root.base, true)
+			if isOpen then renderDir(root.base, 1) end
+		end
+		if not hasFiles then
+			addRow("no file API", "\u{26A0}\u{FE0F}", 0, false, function() end, nil, false)
 		end
 		fileList.CanvasSize = UDim2.new(0, 0, 0, y + 4)
 	end
 
 	-- ================= file operations =================
-	createFile = function(name)
+	createFile = function(dir, name)
 		if name == "" then return end
 		if not name:match("%.%w+$") then name = name .. ".lua" end
-		local path = joinPath(curDir, name)
+		local path = joinPath(dir, name)
 		pcall(function() if writefile then writefile(path, "") end end)
+		expanded[dir] = true
 		refreshFiles()
 		openFile(path)
 	end
-	createFolder = function(name)
+	createFolder = function(dir, name)
 		if name == "" then return end
-		pcall(function() if makefolder then makefolder(joinPath(curDir, name)) end end)
+		pcall(function() if makefolder then makefolder(joinPath(dir, name)) end end)
+		expanded[dir] = true
 		refreshFiles()
 	end
 	deleteEntry = function(path, isFolder)
@@ -6454,19 +6448,22 @@ Extra.openExecutor = function()
 	end
 	showMenu = function(mx, my, target, isFolder)
 		closeMenu()
+		-- where New file/folder land: inside a folder, or next to a clicked file
+		local dir = isFolder and target or parentOf(target or "")
+		local isRoot = (target == SCRIPTS_ROOT or target == "")
 		local items = {}
 		items[#items + 1] = { "New file", function()
-			promptName("New file name", "script.lua", function(n) if n then createFile(n) end end)
+			promptName("New file name", "script.lua", function(n) if n then createFile(dir, n) end end)
 		end }
 		items[#items + 1] = { "New folder", function()
-			promptName("New folder name", "folder", function(n) if n then createFolder(n) end end)
+			promptName("New folder name", "folder", function(n) if n then createFolder(dir, n) end end)
 		end }
 		if target and not isFolder then
 			items[#items + 1] = { "Rename", function()
 				promptName("Rename", baseName(target), function(n) if n then renameEntry(target, n) end end)
 			end }
 		end
-		if target then
+		if target and not isRoot then
 			items[#items + 1] = { "Delete", function() deleteEntry(target, isFolder) end }
 		end
 		items[#items + 1] = { "Refresh", function() refreshFiles() end }
@@ -6510,7 +6507,7 @@ Extra.openExecutor = function()
 	connect(newBtn.MouseButton1Click, function()
 		local p = newBtn.AbsolutePosition
 		click()
-		showMenu(p.X, p.Y + 22, nil, false)
+		showMenu(p.X, p.Y + 22, SCRIPTS_ROOT, true) -- new items go into the scripts root
 	end)
 
 	-- ================= run / clear =================
@@ -6569,10 +6566,11 @@ Extra.openExecutor = function()
 		promptName("Save as", "script.lua", function(n)
 			if not n or n == "" then return end
 			if not n:match("%.%w+$") then n = n .. ".lua" end
-			local path = joinPath(curDir, n)
+			local path = joinPath(SCRIPTS_ROOT, n)
 			pcall(function() if writefile then writefile(path, editorBox.Text) end end)
 			t.path = path
 			t.title = baseName(path)
+			expanded[SCRIPTS_ROOT] = true
 			renderTabs()
 			refreshFiles()
 			notify(n .. " saved", "success", 2)
@@ -6647,20 +6645,6 @@ Extra.openExecutor = function()
 	connect(editorTab.MouseButton1Click, function() click(); selectPage("editor") end)
 	connect(optionsTab.MouseButton1Click, function() click(); selectPage("options") end)
 
-	-- ================= root switching (scripts <-> workspace) =================
-	switchRoot = function(base)
-		curRoot = base
-		curDir = base
-		for i, b in ipairs(rootBtns) do
-			local active = (ROOTS[i].base == base)
-			b.BackgroundTransparency = active and 0 or 0.4
-			b.TextColor3 = active and COL.text or COL.sub
-		end
-		refreshFiles()
-	end
-	connect(scriptsRootBtn.MouseButton1Click, function() click(); switchRoot(SCRIPTS_ROOT) end)
-	connect(workspaceRootBtn.MouseButton1Click, function() click(); switchRoot("") end)
-
 	connect(f.Destroying, function()
 		if keyCap then keyCap:Disconnect() end
 		closeMenu()
@@ -6669,7 +6653,8 @@ Extra.openExecutor = function()
 	-- ================= boot =================
 	selectPage("editor")
 	newTab("untitled", nil, "")
-	switchRoot(SCRIPTS_ROOT)
+	expanded[SCRIPTS_ROOT] = true -- scripts root starts expanded
+	refreshFiles()
 end
 
 -- ---------------- invisibility window ----------------
