@@ -6141,20 +6141,32 @@ Extra.openExecutor = function()
 		CanvasSize = UDim2.new(0, 0, 0, 0),
 	}, mainArea)
 
-	local editorBox = make("TextBox", {
+	-- the editor is a TextBox that auto-grows inside a ScrollingFrame, so long
+	-- scripts scroll vertically. Line wrap is always on, so there's no sideways scroll.
+	local editorScroll = make("ScrollingFrame", {
 		Size = UDim2.new(1, 0, 1, -66), Position = UDim2.new(0, 0, 0, 30),
-		BackgroundColor3 = COL.element, Font = Enum.Font.Code, TextSize = 14,
-		TextColor3 = COL.text, Text = "", PlaceholderText = "-- write your lua here",
-		PlaceholderColor3 = COL.sub, MultiLine = true, ClearTextOnFocus = false,
-		TextXAlignment = Enum.TextXAlignment.Left, TextYAlignment = Enum.TextYAlignment.Top,
-		TextWrapped = false, BorderSizePixel = 0,
+		BackgroundColor3 = COL.element, BorderSizePixel = 0,
+		ScrollBarThickness = 5, ScrollBarImageColor3 = COL.accent,
+		ScrollingDirection = Enum.ScrollingDirection.Y,
+		CanvasSize = UDim2.new(0, 0, 0, 0),
+		AutomaticCanvasSize = Enum.AutomaticSize.Y,
+		ClipsDescendants = true,
 	}, mainArea)
-	round(editorBox, 6)
-	make("UIStroke", { Color = COL.stroke, Thickness = 1 }, editorBox)
+	round(editorScroll, 6)
+	make("UIStroke", { Color = COL.stroke, Thickness = 1 }, editorScroll)
 	make("UIPadding", {
 		PaddingTop = UDim.new(0, 8), PaddingBottom = UDim.new(0, 8),
 		PaddingLeft = UDim.new(0, 8), PaddingRight = UDim.new(0, 8),
-	}, editorBox)
+	}, editorScroll)
+	local editorBox = make("TextBox", {
+		Size = UDim2.new(1, 0, 0, 0), Position = UDim2.new(0, 0, 0, 0),
+		AutomaticSize = Enum.AutomaticSize.Y,
+		BackgroundTransparency = 1, Font = Enum.Font.Code, TextSize = 14,
+		TextColor3 = COL.text, Text = "", PlaceholderText = "-- write your lua here",
+		PlaceholderColor3 = COL.sub, MultiLine = true, ClearTextOnFocus = false,
+		TextXAlignment = Enum.TextXAlignment.Left, TextYAlignment = Enum.TextYAlignment.Top,
+		TextWrapped = true, BorderSizePixel = 0,
+	}, editorScroll)
 
 	local runBtn = make("TextButton", {
 		Size = UDim2.new(0, 120, 0, 30), Position = UDim2.new(0, 0, 1, -32),
@@ -6621,7 +6633,6 @@ Extra.openExecutor = function()
 	end)
 
 	optRow("Clear editor after running", 34, false, function(on) clearAfterRun = on end)
-	optRow("Word wrap", 68, false, function(on) editorBox.TextWrapped = on end)
 	make("TextLabel", {
 		Size = UDim2.new(1, 0, 0, 40), Position = UDim2.new(0, 0, 1, -40),
 		BackgroundTransparency = 1, Font = Enum.Font.Gotham, TextSize = 11,
