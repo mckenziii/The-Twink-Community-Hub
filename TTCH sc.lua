@@ -6040,6 +6040,93 @@ end
 -- rooted at workspace/twinkhub/scripts with a right-click menu (new file/folder,
 -- rename, delete), and an open-key rebind on the Options tab.
 local SCRIPTS_ROOT = "twinkhub/scripts"
+
+-- ---- Lua syntax highlighter: turns source into RichText for the editor overlay ----
+local HL_KW = {}
+for _, k in ipairs({
+	"and", "break", "do", "else", "elseif", "end", "false", "for", "function", "goto",
+	"if", "in", "local", "nil", "not", "or", "repeat", "return", "then", "true",
+	"until", "while", "continue",
+}) do HL_KW[k] = true end
+local HL_GLOBAL = {}
+for _, g in ipairs({
+	"game", "workspace", "script", "shared", "_G", "math", "table", "string", "task", "os",
+	"coroutine", "utf8", "bit32", "wait", "spawn", "delay", "print", "warn", "error", "assert",
+	"pairs", "ipairs", "next", "select", "tonumber", "tostring", "type", "typeof", "pcall",
+	"xpcall", "unpack", "setmetatable", "getmetatable", "rawget", "rawset", "rawequal", "rawlen",
+	"tick", "require", "loadstring", "Instance", "Vector3", "Vector2", "CFrame", "Color3", "UDim",
+	"UDim2", "Enum", "Ray", "Rect", "Region3", "TweenInfo", "NumberRange", "NumberSequence",
+	"ColorSequence", "BrickColor", "Font", "getgenv", "gethui", "getrawmetatable", "setreadonly",
+	"hookfunction", "newcclosure", "getconnections", "firesignal", "cloneref", "readfile",
+	"writefile", "listfiles", "isfile", "isfolder", "makefolder", "delfile", "delfolder",
+}) do HL_GLOBAL[g] = true end
+
+local HL = { kw = "#C678DD", str = "#98C379", com = "#7F848E", num = "#D19A66", glob = "#E5C07B" }
+
+local HL_ESC = { ["&"] = "&amp;", ["<"] = "&lt;", [">"] = "&gt;", ['"'] = "&quot;", ["'"] = "&apos;" }
+local function hlEsc(s)
+	return (s:gsub("[&<>\"']", HL_ESC))
+end
+local function hlSpan(color, s)
+	if s == "" then return "" end
+	return '<font color="' .. color .. '">' .. hlEsc(s) .. "</font>"
+end
+-- end index (inclusive) of a long bracket [[ ]] / [=[ ]=] beginning at i, or nil
+local function hlLong(src, i, n)
+	local eqs = src:match("^%[(=*)%[", i)
+	if not eqs then return nil end
+	local _, e = src:find("]" .. eqs .. "]", i + #eqs + 2, true)
+	return e or n
+end
+
+local function syntaxHighlight(src)
+	local out, i, n = {}, 1, #src
+	while i <= n do
+		local c = src:sub(i, i)
+		if c == "-" and src:sub(i + 1, i + 1) == "-" then
+			local lb = hlLong(src, i + 2, n)
+			local stop
+			if lb then
+				stop = lb
+			else
+				local nl = src:find("\n", i)
+				stop = nl and (nl - 1) or n
+			end
+			out[#out + 1] = hlSpan(HL.com, src:sub(i, stop)); i = stop + 1
+		elseif c == "[" and src:match("^%[=*%[", i) then
+			local lb = hlLong(src, i, n)
+			out[#out + 1] = hlSpan(HL.str, src:sub(i, lb)); i = lb + 1
+		elseif c == '"' or c == "'" then
+			local j = i + 1
+			while j <= n do
+				local cj = src:sub(j, j)
+				if cj == "\\" then j = j + 2
+				elseif cj == "\n" then break
+				elseif cj == c then j = j + 1; break
+				else j = j + 1 end
+			end
+			out[#out + 1] = hlSpan(HL.str, src:sub(i, j - 1)); i = j
+		elseif c:match("%d") then
+			local num = src:match("^0[xX]%x+", i) or src:match("^%d*%.?%d+[eE][%+%-]?%d+", i)
+				or src:match("^%d*%.?%d+", i) or c
+			out[#out + 1] = hlSpan(HL.num, num); i = i + #num
+		elseif c:match("[%a_]") then
+			local word = src:match("^[%w_]+", i) or c
+			if HL_KW[word] then
+				out[#out + 1] = hlSpan(HL.kw, word)
+			elseif HL_GLOBAL[word] then
+				out[#out + 1] = hlSpan(HL.glob, word)
+			else
+				out[#out + 1] = hlEsc(word)
+			end
+			i = i + #word
+		else
+			out[#out + 1] = hlEsc(c); i = i + 1
+		end
+	end
+	return table.concat(out)
+end
+
 Extra.openExecutor = function()
 	local f, body = window("ExecutorUI", "Executor", 660, 460)
 	if not f then
@@ -6155,18 +6242,46 @@ Extra.openExecutor = function()
 	round(editorScroll, 6)
 	make("UIStroke", { Color = COL.stroke, Thickness = 1 }, editorScroll)
 	make("UIPadding", {
-		PaddingTop = UDim.new(0, 8), PaddingBottom = UDim.new(0, 8),
-		PaddingLeft = UDim.new(0, 8), PaddingRight = UDim.new(0, 8),
+		PaddingTop = UDim.new(0, 10), PaddingBottom = UDim.new(0, 10),
+		PaddingLeft = UDim.new(0, 12), PaddingRight = UDim.new(0, 8),
+	}, editorScroll)
+	-- syntax highlighting: a RichText label shows the colour, the transparent TextBox
+	-- on top handles the typing/caret. Same font/size/wrap so they line up exactly.
+	local highlightLabel = make("TextLabel", {
+		Size = UDim2.new(1, 0, 0, 0), Position = UDim2.new(0, 0, 0, 0),
+		AutomaticSize = Enum.AutomaticSize.Y, BackgroundTransparency = 1,
+		Font = Enum.Font.Code, TextSize = 14, RichText = true,
+		TextColor3 = Color3.fromRGB(171, 178, 191), Text = "",
+		TextXAlignment = Enum.TextXAlignment.Left, TextYAlignment = Enum.TextYAlignment.Top,
+		TextWrapped = true, BorderSizePixel = 0, ZIndex = 2,
 	}, editorScroll)
 	local editorBox = make("TextBox", {
 		Size = UDim2.new(1, 0, 0, 0), Position = UDim2.new(0, 0, 0, 0),
 		AutomaticSize = Enum.AutomaticSize.Y,
 		BackgroundTransparency = 1, Font = Enum.Font.Code, TextSize = 14,
-		TextColor3 = COL.text, Text = "", PlaceholderText = "-- write your lua here",
-		PlaceholderColor3 = COL.sub, MultiLine = true, ClearTextOnFocus = false,
+		TextColor3 = COL.text, TextTransparency = 1, Text = "",
+		MultiLine = true, ClearTextOnFocus = false,
 		TextXAlignment = Enum.TextXAlignment.Left, TextYAlignment = Enum.TextYAlignment.Top,
-		TextWrapped = true, BorderSizePixel = 0,
+		TextWrapped = true, BorderSizePixel = 0, ZIndex = 3,
 	}, editorScroll)
+
+	-- keep the colour overlay in step with the text (debounced so big pastes don't hitch)
+	local hlToken = 0
+	local function refreshHighlight()
+		if editorBox.Text == "" then
+			highlightLabel.Text = '<font color="' .. HL.com .. '">-- write your lua here</font>'
+		else
+			highlightLabel.Text = syntaxHighlight(editorBox.Text)
+		end
+	end
+	connect(editorBox:GetPropertyChangedSignal("Text"), function()
+		hlToken = hlToken + 1
+		local mine = hlToken
+		task.delay(0.03, function()
+			if mine == hlToken and highlightLabel.Parent then refreshHighlight() end
+		end)
+	end)
+	refreshHighlight()
 
 	local runBtn = make("TextButton", {
 		Size = UDim2.new(0, 120, 0, 30), Position = UDim2.new(0, 0, 1, -32),
