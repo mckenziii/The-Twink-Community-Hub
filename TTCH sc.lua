@@ -6061,7 +6061,18 @@ for _, g in ipairs({
 	"writefile", "listfiles", "isfile", "isfolder", "makefolder", "delfile", "delfolder",
 }) do HL_GLOBAL[g] = true end
 
-local HL = { kw = "#C678DD", str = "#98C379", com = "#7F848E", num = "#D19A66", glob = "#E5C07B" }
+local HL = {
+	kw = "#C678DD",   -- keywords: local, function, if, end ...
+	str = "#98C379",  -- strings
+	com = "#7F848E",  -- comments
+	num = "#D19A66",  -- numbers
+	glob = "#E5C07B", -- known globals / APIs
+	func = "#61AFEF", -- an identifier being called:  foo(
+	op = "#56B6C2",   -- operators + punctuation
+	const = "#E06C75",-- true / false / nil / self
+	prop = "#E5C07B", -- .field / :method after a dot
+}
+local HL_CONST = { ["true"] = true, ["false"] = true, ["nil"] = true, ["self"] = true }
 
 local HL_ESC = { ["&"] = "&amp;", ["<"] = "&lt;", [">"] = "&gt;", ['"'] = "&quot;", ["'"] = "&apos;" }
 local function hlEsc(s)
@@ -6081,6 +6092,7 @@ end
 
 local function syntaxHighlight(src)
 	local out, i, n = {}, 1, #src
+	local prevOp = nil -- last operator run, so we can spot  .field / :method  (but not ..)
 	while i <= n do
 		local c = src:sub(i, i)
 		if c == "-" and src:sub(i + 1, i + 1) == "-" then
@@ -6093,9 +6105,11 @@ local function syntaxHighlight(src)
 				stop = nl and (nl - 1) or n
 			end
 			out[#out + 1] = hlSpan(HL.com, src:sub(i, stop)); i = stop + 1
+			prevOp = nil
 		elseif c == "[" and src:match("^%[=*%[", i) then
 			local lb = hlLong(src, i, n)
 			out[#out + 1] = hlSpan(HL.str, src:sub(i, lb)); i = lb + 1
+			prevOp = nil
 		elseif c == '"' or c == "'" then
 			local j = i + 1
 			while j <= n do
@@ -6106,22 +6120,37 @@ local function syntaxHighlight(src)
 				else j = j + 1 end
 			end
 			out[#out + 1] = hlSpan(HL.str, src:sub(i, j - 1)); i = j
+			prevOp = nil
 		elseif c:match("%d") then
 			local num = src:match("^0[xX]%x+", i) or src:match("^%d*%.?%d+[eE][%+%-]?%d+", i)
 				or src:match("^%d*%.?%d+", i) or c
 			out[#out + 1] = hlSpan(HL.num, num); i = i + #num
+			prevOp = nil
 		elseif c:match("[%a_]") then
 			local word = src:match("^[%w_]+", i) or c
+			local color
 			if HL_KW[word] then
-				out[#out + 1] = hlSpan(HL.kw, word)
+				color = HL.kw
+			elseif HL_CONST[word] then
+				color = HL.const
+			elseif src:sub(i + #word):match("^%s*%(") then
+				color = HL.func                          -- being called:  name(
+			elseif prevOp == "." or prevOp == ":" then
+				color = HL.prop                          -- .field / :method
 			elseif HL_GLOBAL[word] then
-				out[#out + 1] = hlSpan(HL.glob, word)
-			else
-				out[#out + 1] = hlEsc(word)
+				color = HL.glob
 			end
+			out[#out + 1] = color and hlSpan(color, word) or hlEsc(word)
 			i = i + #word
+			prevOp = nil
 		else
-			out[#out + 1] = hlEsc(c); i = i + 1
+			local ops = src:match("^[%+%-%*/%%%^#=~<>%(%)%{%}%[%]%.;:,]+", i)
+			if ops then
+				out[#out + 1] = hlSpan(HL.op, ops); i = i + #ops
+				prevOp = ops
+			else
+				out[#out + 1] = hlEsc(c); i = i + 1 -- whitespace / anything else (prevOp kept)
+			end
 		end
 	end
 	return table.concat(out)
@@ -6245,22 +6274,24 @@ Extra.openExecutor = function()
 	-- x=12 left, width = frame - 28 leaves ~16px on the right for the 5px scrollbar.
 	local EDIT_POS = UDim2.new(0, 12, 0, 10)
 	local EDIT_SIZE = UDim2.new(1, -28, 0, 0)
-	-- syntax highlighting: a RichText label shows the colour, the transparent TextBox
-	-- on top handles the typing/caret. Same font/size/wrap so they line up exactly.
-	local highlightLabel = make("TextLabel", {
-		Size = EDIT_SIZE, Position = EDIT_POS,
-		AutomaticSize = Enum.AutomaticSize.Y, BackgroundTransparency = 1,
-		Font = Enum.Font.Code, TextSize = 14, RichText = true,
-		TextColor3 = Color3.fromRGB(171, 178, 191), Text = "",
-		TextXAlignment = Enum.TextXAlignment.Left, TextYAlignment = Enum.TextYAlignment.Top,
-		TextWrapped = true, BorderSizePixel = 0, ZIndex = 2,
-	}, editorScroll)
+	-- Syntax highlighting: the editable TextBox sits BEHIND with visible text so its
+	-- native blinking caret shows; the RichText label sits ON TOP (Active=false, so it
+	-- doesn't block clicks) and its coloured glyphs cover the box's plain glyphs exactly.
+	-- Result: you see colour + a real caret. Same font/size/wrap so they line up.
 	local editorBox = make("TextBox", {
 		Size = EDIT_SIZE, Position = EDIT_POS,
 		AutomaticSize = Enum.AutomaticSize.Y,
 		BackgroundTransparency = 1, Font = Enum.Font.Code, TextSize = 14,
-		TextColor3 = COL.text, TextTransparency = 1, Text = "",
+		TextColor3 = COL.text, Text = "",
 		MultiLine = true, ClearTextOnFocus = false,
+		TextXAlignment = Enum.TextXAlignment.Left, TextYAlignment = Enum.TextYAlignment.Top,
+		TextWrapped = true, BorderSizePixel = 0, ZIndex = 2,
+	}, editorScroll)
+	local highlightLabel = make("TextLabel", {
+		Size = EDIT_SIZE, Position = EDIT_POS, Active = false,
+		AutomaticSize = Enum.AutomaticSize.Y, BackgroundTransparency = 1,
+		Font = Enum.Font.Code, TextSize = 14, RichText = true,
+		TextColor3 = Color3.fromRGB(171, 178, 191), Text = "",
 		TextXAlignment = Enum.TextXAlignment.Left, TextYAlignment = Enum.TextYAlignment.Top,
 		TextWrapped = true, BorderSizePixel = 0, ZIndex = 3,
 	}, editorScroll)
