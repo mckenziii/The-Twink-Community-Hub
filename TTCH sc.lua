@@ -6241,14 +6241,14 @@ Extra.openExecutor = function()
 	}, mainArea)
 	round(editorScroll, 6)
 	make("UIStroke", { Color = COL.stroke, Thickness = 1 }, editorScroll)
-	make("UIPadding", {
-		PaddingTop = UDim.new(0, 10), PaddingBottom = UDim.new(0, 10),
-		PaddingLeft = UDim.new(0, 12), PaddingRight = UDim.new(0, 8),
-	}, editorScroll)
+	-- Explicit margins (not UIPadding) so wrapped text never runs under the scrollbar:
+	-- x=12 left, width = frame - 28 leaves ~16px on the right for the 5px scrollbar.
+	local EDIT_POS = UDim2.new(0, 12, 0, 10)
+	local EDIT_SIZE = UDim2.new(1, -28, 0, 0)
 	-- syntax highlighting: a RichText label shows the colour, the transparent TextBox
 	-- on top handles the typing/caret. Same font/size/wrap so they line up exactly.
 	local highlightLabel = make("TextLabel", {
-		Size = UDim2.new(1, 0, 0, 0), Position = UDim2.new(0, 0, 0, 0),
+		Size = EDIT_SIZE, Position = EDIT_POS,
 		AutomaticSize = Enum.AutomaticSize.Y, BackgroundTransparency = 1,
 		Font = Enum.Font.Code, TextSize = 14, RichText = true,
 		TextColor3 = Color3.fromRGB(171, 178, 191), Text = "",
@@ -6256,7 +6256,7 @@ Extra.openExecutor = function()
 		TextWrapped = true, BorderSizePixel = 0, ZIndex = 2,
 	}, editorScroll)
 	local editorBox = make("TextBox", {
-		Size = UDim2.new(1, 0, 0, 0), Position = UDim2.new(0, 0, 0, 0),
+		Size = EDIT_SIZE, Position = EDIT_POS,
 		AutomaticSize = Enum.AutomaticSize.Y,
 		BackgroundTransparency = 1, Font = Enum.Font.Code, TextSize = 14,
 		TextColor3 = COL.text, TextTransparency = 1, Text = "",
