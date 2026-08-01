@@ -8859,6 +8859,14 @@ add{
 	end,
 }
 add{
+	name = "dex++",
+	group = "Scripts",
+	help = "Load the DEX++ explorer",
+	run = function()
+		return loadUrl("https://github.com/AZYsGithub/DexPlusPlus/releases/latest/download/out.lua")
+	end,
+}
+add{
 	name = "infyield",
 	alias = { "iy" },
 	group = "Scripts",
